@@ -6,6 +6,6 @@ namespace MetabytesSRO\EPost\Api\Exception;
 
 use LogicException;
 
-class MissingPreconditionException extends LogicException
+class MissingReturnAddressException extends LogicException
 {
 }

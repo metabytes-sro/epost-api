@@ -1,79 +1,65 @@
 <?php
 
-/**
- * This file is part of metabytes-sro/epost-api.
- *
- * @package   metabytes-sro/epost-api
- * @author    Mantas Samaitis <mantas.samaitis@integrus.lt>, Richard Henkenjohann <richardhenkenjohann@googlemail.com>
- */
+declare(strict_types = 1);
 
 namespace MetabytesSRO\EPost\Api;
 
-
 use GuzzleHttp\Client as HttpClient;
 use GuzzleHttp\Exception\ClientException;
-use Illuminate\Http\Response;
+use Psr\Http\Client\ClientInterface;
 
 /**
- * Class Login
- *
- * @package MetabytesSRO\EPost\Api
+ * API errors (4xx) are converted to ErrorException. Timeouts and connection failures
+ * (ConnectException, RequestException) are not caught—callers should handle these.
  */
 class Login
 {
-    public function login($vendorID, $ekp, $secret, $password): array
+    public function __construct(
+        private readonly ?ClientInterface $httpClient = null,
+    ) {
+    }
+
+    private function getHttpClient(): ClientInterface
     {
-        $options = [
+        return $this->httpClient ?? new HttpClient(['base_uri' => Letter::API_ENDPOINT]);
+    }
+
+    public function login(string $vendorId, string $ekp, string $secret, string $password): LoginResponse
+    {
+        $requestBody    = [
+            'vendorID' => $vendorId,
+            'ekp'      => $ekp,
+            'secret'   => $secret,
+            'password' => $password,
+        ];
+        $requestOptions = [
             'headers' => ['Content-Type' => 'application/json'],
-            'body' => json_encode(
-                compact(['vendorID', 'ekp', 'secret', 'password']),
-            )
+            'body'    => json_encode($requestBody),
         ];
 
         try {
-            $response = (new HttpClient(['base_uri' => Letter::API_ENDPOINT]))
-                    ->request('POST', '/api/Login', $options);
+            $response = $this->getHttpClient()
+                ->request('POST', '/api/Login', $requestOptions)
+            ;
         } catch (ClientException $e) {
             $this->throwErrorException($e);
         }
 
-        return \GuzzleHttp\json_decode(
-            $response->getBody()->getContents(),
-            true
-        );
+        return LoginResponse::fromArray(json_decode($response->getBody()->getContents(), true) ?? []);
     }
 
-    public function smsRequest($vendorID, $ekp): string
+    public function smsRequest(string $vendorId, string $ekp): string
     {
-        $options = [
+        $requestBody    = ['vendorID' => $vendorId, 'ekp' => $ekp];
+        $requestOptions = [
             'headers' => ['Content-Type' => 'application/json'],
-            'body' => json_encode(
-                compact(['vendorID', 'ekp']),
-            )
+            'body'    => json_encode($requestBody),
         ];
 
         try {
-            $response = (new HttpClient(['base_uri' => Letter::API_ENDPOINT]))
-                    ->request('POST', '/api/Login/smsRequest', $options);
-        } catch (ClientException $e) {
-            $this->throwErrorException($e);
-        }
-
-        return $response->getBody()->getContents();
-    }
-
-    public function setPassword($vendorID, $ekp, $newPassword, $smsCode)
-    {
-        $options = [
-            'headers' => ['Content-Type' => 'application/json'],
-            'body' => json_encode(
-                compact(['vendorID', 'ekp', 'newPassword', 'smsCode']),
-            )
-        ];
-
-        try {
-            $response = (new HttpClient(['base_uri' => Letter::API_ENDPOINT]))
-                ->request('POST', '/api/Login/setPassword', $options);
+            $response = $this->getHttpClient()
+                ->request('POST', '/api/Login/smsRequest', $requestOptions)
+            ;
         } catch (ClientException $e) {
             $this->throwErrorException($e);
         }
@@ -81,20 +67,35 @@ class Login
         return $response->getBody()->getContents();
     }
 
-    /**
-     * Throws an exception
-     *
-     * @param $e
-     */
-    protected function throwErrorException($e): void
+    public function setPassword(string $vendorId, string $ekp, string $newPassword, string $smsCode): string
     {
+        $requestBody    = [
+            'vendorID'    => $vendorId,
+            'ekp'         => $ekp,
+            'newPassword' => $newPassword,
+            'smsCode'     => $smsCode,
+        ];
+        $requestOptions = [
+            'headers' => ['Content-Type' => 'application/json'],
+            'body'    => json_encode($requestBody),
+        ];
+
+        try {
+            $response = $this->getHttpClient()
+                ->request('POST', '/api/Login/setPassword', $requestOptions)
+            ;
+        } catch (ClientException $e) {
+            $this->throwErrorException($e);
+        }
+
+        return $response->getBody()->getContents();
+    }
+
+    protected function throwErrorException(ClientException $e): never
+    {
+        $body = $e->getResponse()->getBody()->getContents();
         throw new Exception\ErrorException(
-            new Error(
-                \GuzzleHttp\json_decode(
-                    $e->getResponse()->getBody()->getContents(),
-                    true
-                )
-            )
+            Error::fromArray(json_decode($body, true) ?? []),
         );
     }
 }

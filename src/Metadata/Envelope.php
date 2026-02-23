@@ -1,65 +1,32 @@
 <?php
 
-/**
- * This file is part of metabytes-sro/epost-api.
- *
- * @package   metabytes-sro/epost-api
- * @author    Mantas Samaitis <mantas.samaitis@integrus.lt>, Richard Henkenjohann <richardhenkenjohann@googlemail.com>
- */
+declare(strict_types=1);
 
 namespace MetabytesSRO\EPost\Api\Metadata;
 
-use InvalidArgumentException;
-use LogicException;
 use JsonSerializable;
-use MetabytesSRO\EPost\Api\Metadata\Envelope\AbstractRecipient;
 use MetabytesSRO\EPost\Api\Metadata\Envelope\Recipient;
 
-
-/**
- * Class Envelope
- *
- * @package MetabytesSRO\EPost\Api\Metadata
- */
 class Envelope implements JsonSerializable
 {
+    private ?Recipient $recipient = null;
 
-    /**
-     * The data for used for json encoding
-     *
-     * @var Recipient
-     */
-    protected $data;
-
-    /**
-     * Add a hybrid recipient for printed letters
-     *
-     * @param Recipient\Hybrid|AbstractRecipient $recipient
-     *
-     * @return self
-     */
-    public function setRecipient(Recipient $recipient): Envelope
+    public function setRecipient(Recipient $recipient): self
     {
-        $this->data = $recipient;
-
+        $this->recipient = $recipient;
         return $this;
     }
 
     /**
-     * Get the array containing all envelope properties
-     *
-     * @return array
+     * @return null|array<string, mixed>
      */
-    public function getData()
+    public function getData(): ?array
     {
-        return $this->data->getData();
+        return $this->recipient?->getData();
     }
 
-    /**
-     * {@inheritdoc}
-     */
-    function jsonSerialize()
+    public function jsonSerialize(): array
     {
-        return $this->getData();
+        return $this->recipient?->getData() ?? [];
     }
 }

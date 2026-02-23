@@ -1,190 +1,208 @@
 # E-POSTBUSINESS API V2 PHP integration
 
-[![Build Status][ico-build]][link-build]
-[![Latest Version on Packagist][ico-version]][link-packagist]
-[![Software License][ico-license]]()
-[![Dependency Status][ico-dependencies]][link-dependencies]
+[![Latest Version on Packagist](https://img.shields.io/packagist/v/metabytes-sro/epost-api.svg?style=flat-square)](https://packagist.org/packages/metabytes-sro/epost-api)
 
-This package provides an PHP integration of the E-POSTBUSINESS API.
+PHP integration for the [E-POSTBUSINESS API](https://api.epost.docuguide.com/swagger/index.html) for electronic submission of documents that are subsequently sent as physical letters.
 
 ## Install
 
-Via Composer
-
-``` bash
-$ composer require metabytes-sro/epost-api
+```bash
+composer require metabytes-sro/epost-api
 ```
 
-**For new implementations, I recommend to start with `v0.10.x-dev`.**
+## Upgrading
+
+See [UPGRADE.md](UPGRADE.md) for migration instructions when upgrading between versions.
+
+## Requirements
+
+- PHP ^8.1
+- guzzlehttp/guzzle ^7.0.1
 
 ## Usage
 
-### Authenticate user
+### Authentication
 
-First of all you have to fetch an `AccessToken` instance by authenticating the user. I recommend to use this
-[OAuth2 Provider](https://github.com/richardhj/oauth2-epost) for fetching the access token.
+Obtain an access token via the [OAuth2 Provider](https://github.com/richardhj/oauth2-epost) or the built-in Login:
 
 ```php
-// Authenticate
-/** @var League\OAuth2\Client\Token\AccessToken $token */
-$token = $this->fetchAccessToken();
+use MetabytesSRO\EPost\Api\AccessToken;
+use MetabytesSRO\EPost\Api\Letter;
+
+$token = new AccessToken($vendorID, $ekp, $secret, $password);
 ```
 
-### Provide metadata
-#### Envelope
-
-We're going big steps forward and create a `Letter` instance. The `Letter` collects all metadata (envelope, delivery
-options…), creates a letter draft on the E-POST portal and finally sends the letter.
+### Sending a letter
 
 ```php
-// Create letter and envelope
-$letter = new MetabytesSRO\EPost\Api\Letter();
-$envelope = new MetabytesSRO\EPost\Api\Metadata\Envelope();
-$envelope
-    ->setSystemMessageTypeNormal()  // For sending an electronic letter *OR*
-    ->setSystemMessageTypeHybrid()  // For sending a physical letter
-    ->setSubject('Example letter');
-```
+use MetabytesSRO\EPost\Api\Letter;
+use MetabytesSRO\EPost\Api\Metadata\Envelope;
+use MetabytesSRO\EPost\Api\Metadata\Envelope\Recipient;
+use MetabytesSRO\EPost\Api\Metadata\DeliveryOptions;
 
-##### Recipients
-We created our envelope and we need to add the recipients. This is how for an electronic letter.
-
-```php
-// Add recipients for normal letter
-$recipient = new MetabytesSRO\EPost\Api\Metadata\Envelope\Recipient\Normal::createFromFriendlyEmail('John Doe <doe@example.com>');
-
-$envelope->addRecipientNormal($recipient);
-```
-
-And this is how for a printed letter. For printed letters, only one recipient is valid!
-
-```php
-// Set recipients and delivery options for printed letter
-$recipient = new MetabytesSRO\EPost\Api\Metadata\Envelope\Recipient\Hybrid();
+$letter = new Letter();
+$envelope = new Envelope();
+$recipient = new Recipient();
 $recipient
-    ->setFirstName('John')
-    ->setLastName('Doe')
-    ->setStreetName('…')
-    ->setZipCode('1234')
-    ->setCity('…');
+    ->setAddressLine('Max Mustermann AG', 0)   // addressLine1
+    ->setAddressLine('Musterstrasse 99', 1)    // addressLine2
+    ->setZipCode('12345')
+    ->setCity('Bonn');
 
-$envelope->addRecipientPrinted($recipient);
-```
+$envelope->setRecipient($recipient);
 
-#### Delivery options
-We also define `DeliveryOptions` as they define whether the letter is going to be colored and so on. This is for printed
-letters only.
-
-```php
-// Set delivery options
-$deliveryOptions = new MetabytesSRO\EPost\Api\Metadata\DeliveryOptions();
-$deliveryOptions
-    ->setRegisteredStandard()   // This will make the letter sent as "Einschreiben ohne Optionen"
-    ->setColorColored()         // To make it expensive
-    ->setCoverLetterIncluded(); // The cover letter (with recipient address block) is included in the attachments
-
-$letter->setDeliveryOptions($deliveryOptions);
-```
-
-### Finishing
-
-We're going to start the communication with the E-POST portal.
-
-```php
-// Prepare letter
 $letter
-    ->setTestEnvironment(true)
     ->setAccessToken($token)
     ->setEnvelope($envelope)
-    ->setCoverLetter('This is an example');
+    ->setAttachment('/path/to/document.pdf')
+    ->setTestEnvironment(true);
 
-// Set attachments
-$letter->addAttachment('/var/www/test.pdf');
+// Optional: cover letter (PDF path)
+$letter->setCoverLetter('/path/to/cover.pdf');
 
-// Create and send letter
+// Optional: test mode - receive PDF at email instead of physical send
+$letter->setTestEmail('test@example.com');
+
 try {
-    $letter
-        ->create()
-        ->send();
-
-} catch (GuzzleHttp\Exception\ClientException $e) {
-    $errorInformation = \GuzzleHttp\json_decode($e->getResponse()->getBody());
+    $letter->send();
+    $letterId = $letter->getLetterId();
+} catch (MetabytesSRO\EPost\Api\Exception\ErrorException $e) {
+    $error = $e->getError();
+    // $error->getCode(), $error->getDescription()
 }
 ```
 
-### Fetch postage info
+### Einschreiben (registered mail) with return receipt
 
-If you wonder how expensive the letter is going to be.
-
-Case 1: You already defined a letter with envelope and so on:
+When using "Einschreiben Rückschein" or "Einschreiben eigenhändig Rückschein", you must provide the return address where the handwritten delivery confirmation is sent:
 
 ```php
-$priceInformation = $letter->queryPriceInformation();
+use MetabytesSRO\EPost\Api\Metadata\DeliveryOptions;
+use MetabytesSRO\EPost\Api\Metadata\RegisteredLetterReturnAddress;
 
-var_dump($priceInformation);
+$deliveryOptions = new DeliveryOptions();
+$deliveryOptions
+    ->setRegisteredWithReturnReceipt()  // or setRegisteredAddresseeOnlyWithReturnReceipt()
+    ->setColorColored();
+
+$returnAddress = new RegisteredLetterReturnAddress();
+$returnAddress
+    ->setAddressLine1('My Company GmbH')
+    ->setZipCode('53115')
+    ->setCity('Bonn');
+
+$deliveryOptions->setRegisteredLetterReturnAddress($returnAddress);
+$letter->setDeliveryOptions($deliveryOptions);
 ```
 
-Case 2: You need to provide `PostageInfo`:
+### Batch sending
+
+Send multiple letters in one API request:
 
 ```php
-$postageInfo = new MetabytesSRO\EPost\Api\Metadata\PostageInfo();
-$postageInfo
-    ->setLetterTypeHybrid()
-    ->setLetterSize(3)
-    ->setDeliveryOptions($deliveryOptions);
-    
-$letter = new MetabytesSRO\EPost\Api\Letter();
-$letter->setPostageInfo($postageInfo);
-$priceInformation = $letter->queryPriceInformation();
-
-var_dump($priceInformation);
+$letters = [$letter1, $letter2, $letter3];
+$letter->setAccessToken($token);
+$results = $letter->sendBatch($letters);
+foreach ($results as $result) {
+    $letterId = $result->getLetterId();
+}
 ```
 
-### Delete letters
-
-If you already have a `Letter` instance, deleting is that easy:
+### Status queries
 
 ```php
-$letter
-    ->create() // Yeah, it must be created beforehand, so we have a "letterId"
-    ->delete();
+// Single letter
+$status = $letter->getLetterStatus($letterId);
+
+// Multiple by IDs
+$statuses = $letter->getMultipleLetterStatuses([123, 456], $onlyIssues = false);
+
+// By date range
+$statuses = $letter->getLetterStatusByDateRange('2024-01-01', '2024-01-31');
+
+// Open letters (status 1–3, not yet sent)
+$statuses = $letter->getOpenLetters();
+
+// Einschreiben (registered letters) by date range
+$statuses = $letter->getRegisteredLetterStatus('2024-01-01', '2024-01-31', $onlyOpen = false);
+
+// Einschreiben tracking status (resolve code to description)
+$status = $letter->getLetterStatus($letterId);
+$trackCode = $status->getRegisteredLetterStatus();  // e.g. "DELIVERED", "IN_DELIVERY"
+$description = \MetabytesSRO\EPost\Api\TrackStatusCodes::getDescription($trackCode);  // German description
+$isFinal = \MetabytesSRO\EPost\Api\TrackStatusCodes::isFinal($trackCode);  // true if delivery complete
+
+// Search by custom1 field
+$statuses = $letter->getLetterStatusByCustom1('RE-000123');
+
+// By batch ID
+$statuses = $letter->getLetterStatusByBatch(12345);
 ```
 
-Otherwise you need to know the `letterId`.
+### UploadManagement plugin (queued letters)
+
+For letters submitted with the UploadManagement plugin:
 
 ```php
-$letter = new EPost\Api\Letter();
-$letter
-    ->setLetterId('asdf-124-asdf')
-    ->delete();
+// Cancel queued letters
+$results = $letter->cancelQueued([74567567, 65765678]);
+
+// Release (expedite) queued letters
+$results = $letter->releaseQueued([74567567, 65765678]);
 ```
 
-`delete()` will delete the letter irrecoverably on the E-POST portal. You have to possibility to use `moveToTrash()`
-otherwise. 
+### PremiumAdress feedback
+
+```php
+$feedback = $letter->getPremiumAdressFeedback('2024-01-01', '2024-01-31');
+```
+
+### Price estimation
+
+The E-POSTBUSINESS API does not provide a pricing endpoint for Letter (hybrid mail). Use the built-in calculator with official price lists (valid from 01.01.2025):
+
+```php
+use MetabytesSRO\EPost\Api\Pricing\LetterPriceCalculator;
+use MetabytesSRO\EPost\Api\Pricing\PriceConfig;
+
+// Default prices from Deutsche Post (Tarif Basis)
+$calculator = LetterPriceCalculator::fromEnv();
+
+// Single letter: weight (g), pages, color, duplex, international
+$price = $calculator->calculate(20, 1, false, false, false);  // 0.80 € national standard
+
+// Batch
+$total = $calculator->calculateBatch(100, 50, 4, true, false, false);
+```
+
+**Environment variables** (optional):
+
+| Variable | Description |
+|----------|-------------|
+| `EPOST_TARIFF` | `basis` (default) or `250plus` |
+| `EPOST_PRICES_JSON` | JSON object to override default prices (e.g. negotiated rates) |
+
+Example `.env`:
+
+```
+EPOST_TARIFF=250plus
+# EPOST_PRICES_JSON={"national":{"basis":{"standard":{"sw_simplex":0.75}}}}
+```
+
+Price sources: [National](https://www.deutschepost.de/dam/jcr:4f6b160f-5beb-470a-9891-81e02acdd6e6/dp-epost-preisliste-mailer-basis_250+-ab%2001012025.pdf), [International](https://www.deutschepost.de/dam/jcr:d7e72ba2-a855-4b1d-9300-3c5c6745bf86/dp-epost-preisliste-international-mailer-basis-ab-01012025_vf.pdf)
+
+## API reference
+
+See the [E-POSTBUSINESS API Swagger documentation](https://api.epost.docuguide.com/swagger/index.html) for full details.
+
+## Supporting the project
+
+If this package is useful to you and you would like to support further development, we welcome donations. Please get in touch via [metabytes.eu](https://metabytes.eu) or [info@metabytes.eu](mailto:info@metabytes.eu). We are also open to feature requests.
 
 ## License
 
-The  GNU Lesser General Public License (LGPL).
+LGPL-3.0+
 
 ## Contributing
 
 Please follow the [Symfony Coding Standards](http://symfony.com/doc/current/contributing/code/standards.html).
-
-## Beispiel-Konzept
-
-[Dieses Konzept][link-concept] erklärt die verschiedenen Komponenten, die im Rahmen einer E-POSTBUSINESS-Integration für
-das CMS Contao genutzt wurden.
-
-[![Konzept][image-concept]][link-concept]
-
-[ico-build]: https://travis-ci.org/richardhj/epost-api.svg?branch=master?style=flat-square
-[ico-version]: https://img.shields.io/packagist/v/richardhj/epost-api.svg?style=flat-square
-[ico-license]: https://img.shields.io/badge/license-LGPL-brightgreen.svg?style=flat-square
-[ico-dependencies]: https://www.versioneye.com/php/richardhj:epost-api/badge.svg?style=flat-square
-
-[image-concept]: https://www.dropbox.com/s/rfouu1bidkg62zs/Konzept_Henkenjohann_E-POST-Contao-1.png?dl=1
-
-[link-build]: https://travis-ci.org/richardhj/epost-api
-[link-packagist]: https://packagist.org/packages/metabytes-sro/epost-api
-[link-dependencies]: https://www.versioneye.com/php/richardhj:epost-api
-[link-concept]: https://www.dropbox.com/s/fd7hl33galgy8jh/Konzept_Henkenjohann_E-POST-Contao.pdf?dl=0

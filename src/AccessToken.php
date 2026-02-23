@@ -1,52 +1,27 @@
 <?php
 
-/**
- * This file is part of metabytes-sro/epost-api.
- *
- * @package   metabytes-sro/epost-api
- * @author    Mantas Samaitis <mantas.samaitis@integrus.lt>, Richard Henkenjohann <richardhenkenjohann@googlemail.com>
- */
+declare(strict_types=1);
 
 namespace MetabytesSRO\EPost\Api;
 
-
-use GuzzleHttp\Client as HttpClient;
-
-/**
- * Class AccessToken
- *
- * @package MetabytesSRO\EPost\Api
- */
 class AccessToken
 {
-    protected string $vendorID;
-    protected string $ekp;
-    protected string $secret;
-    protected string $password;
+    private ?string $cachedToken = null;
 
-    /**
-     * AccessToken constructor.
-     *
-     * @param $token
-     */
-    public function __construct($vendorID, $ekp, $secret, $password)
-    {
-        $this->vendorID = $vendorID;
-        $this->ekp = $ekp;
-        $this->secret = $secret;
-        $this->password = $password;
+    public function __construct(
+        private readonly string $vendorId,
+        private readonly string $ekp,
+        private readonly string $secret,
+        private readonly string $password,
+    ) {
     }
-    /**
-     * get an authentication token
-     *
-     * @return string
-     */
+
     public function getToken(): string
     {
-        static $token;
-        if (empty($token)) {
-            $token = (new Login())->login($this->vendorID, $this->ekp, $this->secret, $this->password)['token'];
+        if ($this->cachedToken === null) {
+            $response = (new Login())->login($this->vendorId, $this->ekp, $this->secret, $this->password);
+            $this->cachedToken = $response->getToken();
         }
-        return $token;
+        return $this->cachedToken;
     }
 }
