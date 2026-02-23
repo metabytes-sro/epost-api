@@ -1,41 +1,35 @@
 <?php
 
-/**
- * This file is part of metabytes-sro/epost-api.
- *
- * @package   metabytes-sro/epost-api
- * @author    Mantas Samaitis <mantas.samaitis@integrus.lt>
- */
+declare(strict_types = 1);
 
 namespace MetabytesSRO\EPost\Api\Exception;
 
 use LogicException;
 use MetabytesSRO\EPost\Api\Error;
+use Throwable;
 
-/**
- * Class ErrorException
- * @package MetabytesSRO\EPost\Api\Exception
- */
 class ErrorException extends LogicException
 {
-    protected $level;
-
-    public function __construct(Error $error, Exception $previous = null)
-    {
-        $this->level = $error->getLevel();
-
+    public function __construct(
+        private readonly Error $error,
+        ?Throwable             $previous = null,
+    ) {
         parent::__construct($error->getDescription(), 0, $previous);
-
         $this->code = $error->getCode();
     }
 
-    public function getLevel()
+    public function getError(): Error
     {
-        return $this->level;
+        return $this->error;
     }
 
-    public function __toString()
+    public function getLevel(): string
     {
-        return __CLASS__ . ": [{$this->level}] [{$this->code}]: {$this->message}\n";
+        return $this->error->getLevel();
+    }
+
+    public function __toString(): string
+    {
+        return self::class . ": [{$this->error->getLevel()}] [{$this->error->getCode()}]: {$this->message}\n";
     }
 }

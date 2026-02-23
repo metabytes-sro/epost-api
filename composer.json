@@ -1,26 +1,47 @@
 {
-  "name": "metabytes-sro/epost-api",
-  "description": "E-POSTBUSINESS API PHP integration",
-  "authors": [
-    {
-      "name": "Mantas Samaitis",
-      "email": "mantas.samaitis@integrus.lt",
-      "homepage": "http://integrus.lt",
-      "role": "Web Developer"
+    "name": "metabytes-sro/epost-api",
+    "description": "E-POSTBUSINESS API PHP integration",
+    "authors": [
+        {
+            "name": "Richard Henkenjohann",
+            "email": "richard@henkenjohann.me",
+            "homepage": "https://henkenjohann.me",
+            "role": "Original Author"
+        },
+        {
+            "name": "Jachim Dohmeier",
+            "email": "info@metabytes.eu",
+            "homepage": "https://metabytes.eu",
+            "role": "Maintainer"
+        }
+    ],
+    "license": "LGPL-3.0-or-later",
+    "support": {
+        "issues": "https://github.com/metabytes-sro/epost-api/issues",
+        "source": "https://github.com/metabytes-sro/epost-api"
+    },
+    "funding": [
+        {
+            "type": "custom",
+            "url": "https://metabytes.eu"
+        }
+    ],
+    "require": {
+        "php": "^8.1",
+        "guzzlehttp/guzzle": "^7.0.1",
+        "ext-fileinfo": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.0|^11.0|^12.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "MetabytesSRO\\EPost\\Api\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "MetabytesSRO\\EPost\\Api\\Tests\\": "tests/"
+        }
     }
-  ],
-  "license": "LGPL-3.0+",
-  "support": {
-    "issues": "https://github.com/metabytes-sro/epost-api/issues",
-    "source": "https://github.com/metabytes-sro/epost-api"
-  },
-  "require": {
-    "php": "^7.0||^8.0",
-    "guzzlehttp/guzzle": "^7.0.1"
-  },
-  "autoload": {
-    "psr-4": {
-      "MetabytesSRO\\EPost\\Api\\": "src/"
-    }
-  }
 }

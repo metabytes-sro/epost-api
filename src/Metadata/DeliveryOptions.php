@@ -1,356 +1,168 @@
 <?php
 
-/**
- * This file is part of metabytes-sro/epost-api.
- *
- * @package   metabytes-sro/epost-api
- * @author    Mantas Samaitis <mantas.samaitis@integrus.lt>, Richard Henkenjohann <richardhenkenjohann@googlemail.com>
- */
+declare(strict_types=1);
 
 namespace MetabytesSRO\EPost\Api\Metadata;
 
 use InvalidArgumentException;
 use JsonSerializable;
+use MetabytesSRO\EPost\Api\Exception\MissingReturnAddressException;
 
-
-/**
- * Class DeliveryOptions
- *
- * @package MetabytesSRO\EPost\Api\Metadata
- */
 class DeliveryOptions implements JsonSerializable
 {
-    /**
-     * Registered standard
-     */
-    const OPTION_REGISTERED_STANDARD = 'Einschreiben';
+    public const OPTION_REGISTERED_STANDARD = 'Einschreiben';
+    public const OPTION_REGISTERED_SUBMISSION_ONLY = 'Einwurf Einschreiben';
+    public const OPTION_REGISTERED_ADDRESSEE_ONLY = 'Einschreiben eigenhändig';
+    public const OPTION_REGISTERED_WITH_RETURN_RECEIPT = 'Einschreiben Rückschein';
+    public const OPTION_REGISTERED_ADDRESSEE_ONLY_WITH_RETURN_RECEIPT = 'Einschreiben eigenhändig Rückschein';
+    public const OPTION_REGISTERED_NO = null;
 
-    /**
-     * Registered submission only
-     */
-    const OPTION_REGISTERED_SUBMISSION_ONLY = 'Einwurf Einschreiben';
+    private const OPTIONS_REQUIRING_RETURN_ADDRESS = [
+        self::OPTION_REGISTERED_WITH_RETURN_RECEIPT,
+        self::OPTION_REGISTERED_ADDRESSEE_ONLY_WITH_RETURN_RECEIPT,
+    ];
 
-    /**
-     * Registered addressee only
-     */
-    const OPTION_REGISTERED_ADDRESSEE_ONLY = 'Einschreiben eigenhändig';
+    /** @var array<string, mixed> */
+    private array $options = [];
 
-    /**
-     * Registered with return receipt
-     */
-    const OPTION_REGISTERED_WITH_RETURN_RECEIPT = 'Einschreiben Rückschein';
+    private ?RegisteredLetterReturnAddress $returnAddress = null;
 
-    /**
-     * Registered addressee only with return receipt
-     */
-    const OPTION_REGISTERED_ADDRESSEE_ONLY_WITH_RETURN_RECEIPT = 'Einschreiben eigenhändig Rückschein';
-
-    /**
-     * Registered no
-     */
-    const OPTION_REGISTERED_NO = null;
-
-    /**
-     * The data used for json encoding
-     *
-     * @var array
-     */
-    protected $data = [];
-
-    /**
-     * The option specifies to carry out a black-and-white printing
-     *
-     * @return self
-     */
-    public function setColorGrayscale(): DeliveryOptions
+    public function setColorGrayscale(): self
     {
         return $this->setColor(false);
     }
 
-    /**
-     * The option specifies to carry out a color printing
-     *
-     * @return self
-     */
-    public function setColorColored(): DeliveryOptions
+    public function setColorColored(): self
     {
         return $this->setColor(true);
     }
 
-    /**
-     * The option specifies whether a color or black-and-white printing is carried out
-     *
-     * @param bool $enabled
-     *
-     * @return self
-     */
-    public function setColor($enabled): DeliveryOptions
+    public function setColor(bool $enabled): self
     {
-        $this->data['isColor'] = $enabled;
-
+        $this->options['isColor'] = $enabled;
         return $this;
     }
 
-
-    /**
-     * Get color property
-     *
-     * @return string
-     */
-    public function getColor()
+    public function getColor(): bool
     {
-        return $this->data['isColor'] ?? false;
+        return $this->options['isColor'] ?? false;
     }
 
-    /**
-     * The option specifies whether a color or black-and-white printing is carried out
-     *
-     * @param bool $enabled
-     *
-     * @return self
-     */
-    public function setTestFlag($enabled): DeliveryOptions
+    public function setTestFlag(bool $enabled): self
     {
-        $this->data['testFlag'] = $enabled;
-
+        $this->options['testFlag'] = $enabled;
         return $this;
     }
 
-    /**
-     * Get testFlag property
-     *
-     * @return string
-     */
-    public function getTestFlag()
+    public function getTestFlag(): bool
     {
-        return $this->data['testFlag'] ?? false;
-
+        return $this->options['testFlag'] ?? false;
     }
 
-    /**
-     * The option specifies whether a color or black-and-white printing is carried out
-     *
-     * @param string $emailAddress
-     *
-     * @return self
-     */
-    public function setTestEMail($emailAddress): DeliveryOptions
+    public function setTestEMail(string $emailAddress): self
     {
-        $this->data['testEMail'] = $emailAddress;
-
+        $this->options['testEMail'] = $emailAddress;
         return $this;
     }
 
-    /**
-     * Get testFlag property
-     *
-     * @return string
-     */
-    public function getTestEMail()
+    public function getTestEMail(): string
     {
-        return $this->data['testEMail'] ?? '';
-
+        return $this->options['testEMail'] ?? '';
     }
 
-    /**
-     * The option specifies whether a color or black-and-white printing is carried out
-     *
-     * @param bool $enabled
-     *
-     * @return self
-     */
-    public function setTestShowRestrictedArea($enabled): DeliveryOptions
+    public function setTestShowRestrictedArea(bool $enabled): self
     {
-        $this->data['testShowRestrictedArea'] = $enabled;
-
+        $this->options['testShowRestrictedArea'] = $enabled;
         return $this;
     }
 
-    /**
-     * Get testFlag property
-     *
-     * @return string
-     */
-    public function getTestShowRestrictedArea()
+    public function getTestShowRestrictedArea(): bool
     {
-        return $this->data['testShowRestrictedArea'] ?? false;
-
+        return $this->options['testShowRestrictedArea'] ?? false;
     }
 
-    /**
-     * The first page of the submitted PDF will be used as the cover letter
-     *
-     * @return self
-     */
-    public function setCoverLetterIncluded(): DeliveryOptions
+    public function setCoverLetterIncluded(): self
     {
         return $this->setCoverLetter(true);
     }
 
-    /**
-     * The cover letter is automatically generated
-     *
-     * @return self
-     */
-    public function setCoverLetterGenerate(): DeliveryOptions
+    public function setCoverLetterGenerate(): self
     {
         return $this->setCoverLetter(false);
     }
 
-    /**
-     * The option specifies whether a cover letter is generated for delivery or if it is included in the PDF attachment
-     *
-     * @param bool $enabled
-     *
-     * @return self
-     */
-    public function setCoverLetter($enabled): DeliveryOptions
+    public function setCoverLetter(bool $enabled): self
     {
-        $this->data['coverLetter'] = $enabled;
-
+        $this->options['coverLetter'] = $enabled;
         return $this;
     }
 
-    /**
-     * Get coverLetter property
-     *
-     * @return string
-     */
-    public function getCoverLetter()
+    public function getCoverLetter(): bool
     {
-        return $this->data['coverLetter'] ?? false;
+        return $this->options['coverLetter'] ?? false;
     }
 
-    /**
-     * The option specifies whether a double-sided duplex printing is to be used. When duplex printing is used, all
-     * attached documents, including the generated cover page, are printed on both sides of a sheet.
-     *
-     * @param bool $duplex
-     *
-     * @return $this
-     */
-    public function setDuplex($duplex): DeliveryOptions
+    public function setDuplex(bool $duplex): self
     {
-        $this->data['isDuplex'] = (bool)$duplex;
-
+        $this->options['isDuplex'] = $duplex;
         return $this;
     }
 
-    /**
-     * Get duplex property
-     *
-     * @return bool
-     */
-    public function getDuplex()
+    public function getDuplex(): bool
     {
-        return (bool)$this->data['isDuplex'];
+        return (bool) ($this->options['isDuplex'] ?? false);
     }
 
-    /**
-     * “Einschreiben ohne Optionen” (registered mail without options)
-     * Not only the recipient personally, but also an authorized recipient, e.g. a spousemust, is allowed to
-     * acknowledge receipt.
-     *
-     * @return self
-     */
-    public function setRegisteredStandard(): DeliveryOptions
+    public function setRegisteredStandard(): self
     {
         return $this->setRegistered(self::OPTION_REGISTERED_STANDARD);
     }
 
-    /**
-     * “Einschreiben Einwurf” (registered mail delivered to mailbox)
-     * The deliverer of the Deutsche Post AG drops the letter into a mailbox of the receiver and the deliverer confirms
-     * this with his signature.
-     *
-     * @return self
-     */
-    public function setRegisteredSubmissionOnly(): DeliveryOptions
+    public function setRegisteredSubmissionOnly(): self
     {
         return $this->setRegistered(self::OPTION_REGISTERED_SUBMISSION_ONLY);
     }
 
-    /**
-     * “Einschreiben nur mit Option Eigenhändig” (personal registered mail)
-     * Only the recipient is allowed to acknowledge receipt.
-     *
-     * @return self
-     */
-    public function setRegisteredAddresseeOnly(): DeliveryOptions
+    public function setRegisteredAddresseeOnly(): self
     {
         return $this->setRegistered(self::OPTION_REGISTERED_ADDRESSEE_ONLY);
     }
 
-    /**
-     * “Einschreiben nur mit Option Rückschein” (registered mail with return receipt)
-     * The sender gets sent the handwritten conformation of an authorized recipient about the delivery as original.
-     *
-     * @return self
-     */
-    public function setRegisteredWithReturnReceipt(): DeliveryOptions
+    public function setRegisteredWithReturnReceipt(): self
     {
         return $this->setRegistered(self::OPTION_REGISTERED_WITH_RETURN_RECEIPT);
     }
 
-    /**
-     * “Einschreiben mit Option Eigenhändig und Rückschein” (personal registered mail with return receipt)
-     * The sender gets sent the handwritten conformation of the recipient personally about the delivery as original
-     *
-     * @return self
-     */
-    public function setRegisteredAddresseeOnlyWithReturnReceipt(): DeliveryOptions
+    public function setRegisteredAddresseeOnlyWithReturnReceipt(): self
     {
         return $this->setRegistered(self::OPTION_REGISTERED_ADDRESSEE_ONLY_WITH_RETURN_RECEIPT);
     }
 
-    /**
-     * “Standardbrief” (standard letter)
-     *
-     * @return self
-     */
-    public function setRegisteredNo(): DeliveryOptions
+    public function setRegisteredNo(): self
     {
         return $this->setRegistered(self::OPTION_REGISTERED_NO);
     }
 
-    /**
-     * The option specifies if the E‑POST letter is sent as a “Einschreiben” (registered letter), and, if so, which
-     * registered letter type is to be selected
-     *
-     * @param string $registered
-     *
-     * @return self
-     * @throws InvalidArgumentException
-     */
-    public function setRegistered($registered): DeliveryOptions
+    public function setRegistered(?string $registered): self
     {
-        if (!in_array($registered, static::getOptionsForRegistered())) {
+        if (!in_array($registered, self::getOptionsForRegistered(), true)) {
             throw new InvalidArgumentException(
-                sprintf('Property %s is not supported for %s', $registered, __FUNCTION__)
+                sprintf('Property %s is not supported for setRegistered()', $registered ?? 'null')
             );
         }
-
-        $this->data['registeredLetter'] = $registered;
-
+        $this->options['registeredLetter'] = $registered;
         return $this;
     }
 
-    /**
-     * Get registered property
-     *
-     * @return string
-     */
-    public function getRegistered()
+    public function getRegistered(): ?string
     {
-        return $this->data['registeredLetter'] ?? self::OPTION_REGISTERED_NO;
+        return $this->options['registeredLetter'] ?? self::OPTION_REGISTERED_NO;
     }
 
     /**
-     * Get all options that can be used for setRegistered()
-     *
-     * @return array
+     * @return array<string|null>
      */
-    public static function getOptionsForRegistered()
+    public static function getOptionsForRegistered(): array
     {
         return [
             self::OPTION_REGISTERED_STANDARD,
@@ -362,20 +174,36 @@ class DeliveryOptions implements JsonSerializable
         ];
     }
 
-    /**
-     * Get the array containing all delivery options
-     *
-     * @return array
-     */
-    public function getData()
+    public function setRegisteredLetterReturnAddress(RegisteredLetterReturnAddress $address): self
     {
-        return $this->data;
+        $this->returnAddress = $address;
+        return $this;
+    }
+
+    public function getRegisteredLetterReturnAddress(): ?RegisteredLetterReturnAddress
+    {
+        return $this->returnAddress;
     }
 
     /**
-     * {@inheritdoc}
+     * @return array<string, mixed>
      */
-    function jsonSerialize()
+    public function getData(): array
+    {
+        $registered = $this->options['registeredLetter'] ?? null;
+        if (in_array($registered, self::OPTIONS_REQUIRING_RETURN_ADDRESS, true)) {
+            if ($this->returnAddress === null) {
+                throw new MissingReturnAddressException(
+                    'RegisteredLetterReturnAddress is required when using Einschreiben Rückschein. '
+                    . 'Call setRegisteredLetterReturnAddress() with the address where the return receipt should be sent.'
+                );
+            }
+            return array_merge($this->options, $this->returnAddress->getData());
+        }
+        return $this->options;
+    }
+
+    public function jsonSerialize(): array
     {
         return $this->getData();
     }

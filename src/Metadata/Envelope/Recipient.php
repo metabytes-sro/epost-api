@@ -1,11 +1,6 @@
 <?php
 
-/**
- * This file is part of metabytes-sro/epost-api.
- *
- * @package   metabytes-sro/epost-api
- * @author    Mantas Samaitis <mantas.samaitis@integrus.lt>, Richard Henkenjohann <richardhenkenjohann@googlemail.com>
- */
+declare(strict_types=1);
 
 namespace MetabytesSRO\EPost\Api\Metadata\Envelope;
 
@@ -13,169 +8,100 @@ use InvalidArgumentException;
 use JsonSerializable;
 use MetabytesSRO\EPost\Api\Exception\InvalidRecipientDataException;
 
-
-/**
- * Class Recipient
- *
- * @package MetabytesSRO\EPost\Api\Metadata\Envelope
- */
 class Recipient implements JsonSerializable
 {
-    /**
-     * The data used for json
-     *
-     * @var array
-     */
-    protected $data = [];
-
-    /**
-     * Mapping allowed properties with maximum allowed length
-     *
-     * @var array
-     */
-    protected static $validationLengthMap = [
-        'addressLine1'       => 80,
-        'addressLine2'    => 80,
-        'addressLine3'    => 80,
-        'addressLine4'    => 80,
-        'addressLine5'    => 80,
-        'zipCode'       => 20, // postal code (ex. 53115)
-        'city'          => 80,
-        'country'       => 80
+    private const MAX_LENGTHS = [
+        'addressLine1' => 80,
+        'addressLine2' => 80,
+        'addressLine3' => 80,
+        'addressLine4' => 80,
+        'addressLine5' => 80,
+        'zipCode' => 20,
+        'city' => 80,
+        'country' => 80,
     ];
 
-    /**
-     * Set an address line by number
-     *
-     * @return self
-     */
-    public function setAddressLine($line, $num): Recipient
+    /** @var array<string, string> */
+    private array $fields = [];
+
+    public function setAddressLine(string $value, int $lineIndex): self
     {
-        if($num >= 5 || $num < 0) {
-            throw new InvalidRecipientDataException('Address line number should be in range between 0 and 4.');
+        if ($lineIndex < 0 || $lineIndex >= 5) {
+            throw new InvalidRecipientDataException('Address line index must be between 0 and 4');
         }
-
-        self::validateSetLength('addressLine' . ($num + 1), $line);
-        $this->data['addressLine' . ($num + 1)] = $line;
-
+        $key = 'addressLine' . ($lineIndex + 1);
+        $this->validateLength($key, $value);
+        $this->fields[$key] = $value;
         return $this;
     }
 
-    /**
-     * @return string
-     */
-    public function getAddressLine($num)
+    public function getAddressLine(int $lineIndex): ?string
     {
-        return $this->data['addressLine' . ($num + 1)] ?? null;
+        $key = 'addressLine' . ($lineIndex + 1);
+        return $this->fields[$key] ?? null;
     }
 
-    /**
-     * Set a zip code
-     *
-     * @return self
-     */
-    public function setZipCode(string $zipCode): Recipient
+    public function setZipCode(string $zipCode): self
     {
-        self::validateSetLength('zipCode', $zipCode);
-        $this->data['zipCode'] = $zipCode;
-
+        $this->validateLength('zipCode', $zipCode);
+        $this->fields['zipCode'] = $zipCode;
         return $this;
     }
 
-    /**
-     * Get a zip code
-     *
-     * @return string
-     */
-    public function getZipCode()
+    public function getZipCode(): ?string
     {
-        return $this->data['zipCode'] ?? null;
+        return $this->fields['zipCode'] ?? null;
     }
 
-    /**
-     * Set a city
-     *
-     * @@return self
-     */
-    public function setCity(string $city): Recipient
+    public function setCity(string $city): self
     {
-        self::validateSetLength('city', $city);
-        $this->data['city'] = $city;
-
+        $this->validateLength('city', $city);
+        $this->fields['city'] = $city;
         return $this;
     }
 
-    /**
-     * Get a city
-     *
-     * @return string
-     */
-    public function getCity()
+    public function getCity(): ?string
     {
-        return $this->data['city'] ?? null;
+        return $this->fields['city'] ?? null;
     }
 
-    /**
-     * Set a country
-     * Hier muss der Ländername nach ISO 3166-1 in GROßBUCHSTABEN und deutscher Sprache hinterlegt werden. (z.B. KROATIEN, ITALIEN, ÖSTERREICH ..). Inlandsendungen benötigen keine Länderangabe.
-     *
-     * @return self
-     */
-    public function setCountry(string $country): Recipient
+    public function setCountry(string $country): self
     {
-        self::validateSetLength('country', $country);
-        $this->data['country'] = $country;
-
+        $this->validateLength('country', $country);
+        $this->fields['country'] = $country;
         return $this;
     }
 
-    /**
-     * Get a country
-     *
-     * @return string
-     */
-    public function getCountry()
+    public function getCountry(): ?string
     {
-        return $this->data['country'] ?? null;
+        return $this->fields['country'] ?? null;
     }
 
-
     /**
-     * {@inheritdoc}
-     *
-     * @throws InvalidRecipientDataException
+     * @return array<string, string>
      */
-    function jsonSerialize()
+    public function getData(): array
     {
-        if (null === $this->getAddressLine(1) && null === $this->getCity() && null === $this->getZipCode()) {
+        return $this->fields;
+    }
+
+    public function jsonSerialize(): array
+    {
+        if ($this->getAddressLine(0) === null || $this->getCity() === null || $this->getZipCode() === null) {
             throw new InvalidRecipientDataException(
                 'An address line 1, city and zip code must be set at least'
             );
         }
-
         return $this->getData();
     }
 
-    /**
-     * @param string $key
-     * @param mixed  $value
-     */
-    private static function validateSetLength($key, $value)
+    private function validateLength(string $key, string $value): void
     {
-        if (strlen($value) > static::$validationLengthMap[$key]) {
+        $max = self::MAX_LENGTHS[$key] ?? 80;
+        if (strlen($value) > $max) {
             throw new InvalidArgumentException(
-                sprintf('Value of property "%s" exceeds maximum length of %u', $key, static::$validationLengthMap[$key])
+                sprintf('Value of "%s" exceeds maximum length of %u', $key, $max)
             );
         }
-    }
-
-    /**
-     * Get raw data array
-     *
-     * @return array
-     */
-    public function getData()
-    {
-        return $this->data;
     }
 }

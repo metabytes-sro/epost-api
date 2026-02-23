@@ -4,7 +4,12 @@ declare(strict_types=1);
 
 namespace MetabytesSRO\EPost\Api;
 
-class Error
+/**
+ * Error item from LetterStatus::getErrors() (errorList).
+ *
+ * @see https://api.epost.docuguide.com/swagger/v2/swagger.json Error schema
+ */
+class LetterStatusError
 {
     public function __construct(
         private readonly string $level,

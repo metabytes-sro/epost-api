@@ -1,3 +1,10 @@
+# Dependencies
+composer.lock
+vendor/
+
+# IDE
+.idea/
+
 # OS
 .DS_Store
 Thumbs.db

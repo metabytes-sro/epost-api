@@ -1,21 +1,11 @@
 <?php
 
-/**
- * This file is part of metabytes-sro/epost-api.
- *
- * @package   metabytes-sro/epost-api
- * @author    Mantas Samaitis <mantas.samaitis@integrus.lt>, Richard Henkenjohann <richardhenkenjohann@googlemail.com>
- */
+declare(strict_types=1);
 
 namespace MetabytesSRO\EPost\Api;
 
 use GuzzleHttp\Client as HttpClient;
-use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\ClientException;
-use GuzzleHttp\Psr7\MultipartStream;
-use Illuminate\Http\Response;
-use InvalidArgumentException;
-use LogicException;
 use MetabytesSRO\EPost\Api\Exception\InvalidFileFormat;
 use MetabytesSRO\EPost\Api\Exception\MissingAuthorizationTokenException;
 use MetabytesSRO\EPost\Api\Exception\MissingAttachmentException;
@@ -24,461 +14,378 @@ use MetabytesSRO\EPost\Api\Exception\MissingPreconditionException;
 use MetabytesSRO\EPost\Api\Exception\MissingRecipientException;
 use MetabytesSRO\EPost\Api\Metadata\DeliveryOptions;
 use MetabytesSRO\EPost\Api\Metadata\Envelope;
-
+use MetabytesSRO\EPost\Api\LetterSendResult;
+use MetabytesSRO\EPost\Api\LetterDataResult;
+use MetabytesSRO\EPost\Api\QueuedOperationResult;
 
 /**
- * Class Letter
- *
- * @package MetabytesSRO\EPost\Api
+ * API errors (4xx) are converted to ErrorException. Timeouts and connection failures
+ * (ConnectException, RequestException) are not caught—callers should handle these.
  */
 class Letter
 {
+    public const API_ENDPOINT = 'https://api.epost.docuguide.com';
 
-    /**
-     * EPost endpoint and integration environment
-     *
-     * @var string
-     */
-    const API_ENDPOINT = 'https://api.epost.docuguide.com';
+    private ?HttpClient $httpClient = null;
 
-    /**
-     * A toggle to enable test and integration environment
-     *
-     * @var bool
-     */
-    private $testEnvironment;
+    private bool $testEnvironment = false;
+    private ?string $testEmail = null;
+    private ?AccessToken $accessToken = null;
+    private ?Envelope $envelope = null;
+    private ?string $coverLetterPath = null;
+    private ?string $attachmentPath = null;
+    private ?DeliveryOptions $deliveryOptions = null;
+    private ?string $letterId = null;
 
-    /**
-     * EPost Test Email for Test Environment being enabled
-     *
-     * @var bool
-     */
-    private $testEmail;
+    public function __construct(?HttpClient $httpClient = null)
+    {
+        $this->httpClient = $httpClient;
+    }
 
-    /**
-     * The OAuth access token instance
-     *
-     * @var AccessToken
-     */
-    private $accessToken;
-
-    /**
-     * The envelope (metadata)
-     *
-     * @var Envelope
-     */
-    private $envelope;
-
-    /**
-     * The optional cover letter html formatted
-     *
-     * @var string
-     */
-    private $coverLetter;
-
-    /**
-     * The attachment paths
-     *
-     * @var string
-     */
-    private $attachment;
-
-    /**
-     * The delivery options
-     *
-     * @var DeliveryOptions
-     */
-    private $deliveryOptions;
-
-    /**
-     * The letter's id available after the draft was created
-     *
-     * @var string
-     */
-    private $letterId;
-
-    /**
-     * Set the access token
-     *
-     * @param AccessToken $accessToken
-     *
-     * @return self
-     */
-    public function setAccessToken(AccessToken $accessToken): Letter
+    public function setAccessToken(AccessToken $accessToken): self
     {
         $this->accessToken = $accessToken;
-
         return $this;
     }
 
-    /**
-     * Get the access token
-     *
-     * @return AccessToken
-     * @throws MissingAuthorizationTokenException If the AccessToken is missing
-     */
     public function getAccessToken(): AccessToken
     {
-        if (null === $this->accessToken) {
+        if ($this->accessToken === null) {
             throw new MissingAuthorizationTokenException('An AccessToken instance must be passed');
         }
-
         return $this->accessToken;
     }
 
-    /**
-     * Set the envelope
-     *
-     * @param Envelope $envelope
-     *
-     * @return self
-     */
-    public function setEnvelope(Envelope $envelope): Letter
+    public function setEnvelope(Envelope $envelope): self
     {
         $this->envelope = $envelope;
-
         return $this;
     }
 
-    /**
-     * Get the envelope
-     *
-     * @return Envelope
-     * @throws MissingEnvelopeException If the envelope is missing
-     * @throws MissingRecipientException If there are no recipients
-     */
     public function getEnvelope(): Envelope
     {
-        if (null === $this->envelope) {
+        if ($this->envelope === null) {
             throw new MissingEnvelopeException('No Envelope provided! Provide one beforehand');
         }
-
-        if ($this->envelope->getData() == null) {
+        if ($this->envelope->getData() === null) {
             throw new MissingRecipientException('No recipient provided! Add them beforehand');
         }
-
         return $this->envelope;
     }
 
-    /**
-     * Set the cover letter as path
-     *
-     * @param string $coverLetter
-     *
-     * @return self
-     */
-    public function setCoverLetter($coverLetter): Letter
+    public function setCoverLetter(?string $coverLetterPath): self
     {
-        $this->coverLetter = $coverLetter;
-
+        $this->coverLetterPath = $coverLetterPath;
         return $this;
     }
 
-    /**
-     * Get the pdf formatted cover letter path
-     *
-     * @return string
-     */
-    public function getCoverLetter()
+    public function getCoverLetter(): ?string
     {
-        return $this->coverLetter;
+        return $this->coverLetterPath;
     }
 
-    /**
-     * Set attachment as path
-     *
-     * @param string $attachment The attachment path
-     *
-     * @return self
-     */
-    public function setAttachment($attachment): Letter
+    public function setAttachment(string $attachmentPath): self
     {
-        if(mime_content_type($attachment) != 'application/pdf') {
+        if (mime_content_type($attachmentPath) !== 'application/pdf') {
             throw new InvalidFileFormat('Unallowed file format. Allowed: pdf');
         }
-
-        $this->attachment = $attachment;
-
+        $this->attachmentPath = $attachmentPath;
         return $this;
     }
 
-    /**
-     * Get the attachment path
-     *
-     * @return string
-     * @throws MissingAttachmentException If the attachment is missing
-     */
-    public function getAttachment()
+    public function getAttachment(): string
     {
-        if (empty($this->attachment)) {
+        if ($this->attachmentPath === null || $this->attachmentPath === '') {
             throw new MissingAttachmentException('No attachment provided! Please add an attachment.');
         }
-
-        return $this->attachment;
+        return $this->attachmentPath;
     }
 
-    /**
-     * Gather letter status from API
-     *
-     * @param null $letterId
-     * @return LetterStatus
-     */
-    public function getLetterStatus($letterId = null): LetterStatus
-    {
-        $letterId = $letterId ?? $this->getLetterId();
-
-        try {
-            $response = $this->getHttpClient(static::API_ENDPOINT)
-                ->request('GET', '/api/Letter/' . $letterId);
-        } catch (ClientException $e) {
-            $this->throwErrorException($e);
-        }
-
-        return new LetterStatus(
-            \GuzzleHttp\json_decode(
-                $response->getBody()->getContents(),
-                true
-            )
-        );
-    }
-
-    /**
-     * Execute Letter Status Query with specified ids and result in batch
-     *
-     * @param array $letterIds
-     * @param bool $onlyIssues
-     * @return array
-     */
-    public function getMultipleLetterStatuses($letterIds = [], $onlyIssues = false) : array
-    {
-        $options = [
-            'headers' => [ 'Content-Type' => 'application/json' ],
-            'body'    => json_encode($letterIds)
-        ];
-
-        try {
-            $response = $this->getHttpClient(static::API_ENDPOINT)
-                ->request('POST', '/api/Letter/StatusQuery?onlyIssues=' .( $onlyIssues ? 'true' : 'false' ),
-                    $options);
-        } catch (ClientException $e) {
-            $this->throwErrorException($e);
-        }
-
-        $result = \GuzzleHttp\json_decode(
-            $response->getBody()->getContents(),
-            true
-        );
-
-        $letterStatuses = [];
-
-        foreach($result as $elementData) {
-            $letterStatuses[] = new LetterStatus($elementData);
-        }
-
-        return $letterStatuses ?? $result;
-    }
-
-    public function getLetterStatusByDateRange($fromDate, $tillDate, $onlyIssues = false): array
-    {
-        $onlyIssues = $onlyIssues ? 'true' : 'false';
-
-        try {
-            $response = $this->getHttpClient(static::API_ENDPOINT)
-                ->request('GET', '/api/Letter/Date', [
-                    'query' => compact(['fromDate',
-                        'tillDate',
-                        'onlyIssues'])
-                ]);
-        } catch (ClientException $e) {
-            $this->throwErrorException($e);
-        }
-
-        return \GuzzleHttp\json_decode(
-            $response->getBody()->getContents(),
-            true
-        );
-    }
-
-    /**
-     * Set the delivery options
-     *
-     * @param DeliveryOptions $deliveryOptions
-     *
-     * @return self
-     * @throws LogicException If the letter isn't a hybrid (printed) letter
-     */
-    public function setDeliveryOptions(DeliveryOptions $deliveryOptions): Letter
+    public function setDeliveryOptions(?DeliveryOptions $deliveryOptions): self
     {
         $this->deliveryOptions = $deliveryOptions;
-
         return $this;
     }
 
-    /**
-     * Get the delivery options
-     *
-     * @return DeliveryOptions
-     */
-    public function getDeliveryOptions()
+    public function getDeliveryOptions(): ?DeliveryOptions
     {
         return $this->deliveryOptions;
     }
 
-    /**
-     * Set the letter id
-     *
-     * @param string $letterId
-     *
-     * @return self
-     */
-    public function setLetterId($letterId): Letter
+    public function setLetterId(?string $letterId): self
     {
         $this->letterId = $letterId;
-
         return $this;
     }
 
-    /**
-     * Get the letter id
-     *
-     * @return string
-     * @throws MissingPreconditionException If the letter id is missing
-     */
-    public function getLetterId()
+    public function getLetterId(): string
     {
-        if (!$this->letterId) {
+        if ($this->letterId === null || $this->letterId === '') {
             throw new MissingPreconditionException('No letter id provided! Set letter id beforehand');
         }
-
         return $this->letterId;
     }
 
-    /**
-     * Enable/disable the test and integration environment
-     *
-     * @param boolean $testEnvironment
-     *
-     * @return self
-     */
-    public function setTestEnvironment($testEnvironment): Letter
+    public function setTestEnvironment(bool $testEnvironment): self
     {
         $this->testEnvironment = $testEnvironment;
-
         return $this;
     }
 
-    /**
-     * Sets Email for Test Environment
-     *
-     * @param string $email
-     *
-     * @return self
-     */
-    public function setTestEmail($testEmail): Letter
+    public function setTestEmail(?string $testEmail): self
     {
         $this->testEmail = $testEmail;
-
         return $this;
     }
 
-    /**
-     * Return true for enabled test and integration environment
-     *
-     * @return bool
-     */
-    public function isTestEnvironment()
+    public function isTestEnvironment(): bool
     {
         return $this->testEnvironment;
     }
 
-    /**
-     * Send the given letter. Delivery options should be set optionally for physical letters
-     *
-     * @return self
-     * @throws BadResponseException See API Send Reference
-     */
-    public function send(): Letter
+    public function buildLetterPayload(): array
     {
-        $data = $this->getEnvelope()->getData();
+        $payload = $this->getEnvelope()->getData();
 
-        if ($this->getCoverLetter()) {
-            $data['coverLetter'] = true;
-            $data['coverData'] = chunk_split(base64_encode(
-                file_get_contents($this->getCoverLetter()))
-            );
+        if ($this->coverLetterPath !== null && $this->coverLetterPath !== '') {
+            $payload['coverLetter'] = true;
+            $payload['coverData'] = chunk_split(base64_encode(file_get_contents($this->coverLetterPath)));
         } else {
-            $data['coverLetter'] = false;
+            $payload['coverLetter'] = false;
         }
 
-        $attachment = $this->getAttachment();
-        $data['fileName'] = basename($attachment);
-        $data['data'] = chunk_split(base64_encode(
-            file_get_contents($attachment))
-        );
+        $attachmentPath = $this->getAttachment();
+        $payload['fileName'] = basename($attachmentPath);
+        $payload['data'] = chunk_split(base64_encode(file_get_contents($attachmentPath)));
 
-        if (null !== $this->getDeliveryOptions()) {
-            $data = array_merge($data, $this->getDeliveryOptions()->getData());
+        if ($this->deliveryOptions !== null) {
+            $payload = array_merge($payload, $this->deliveryOptions->getData());
         }
 
-        if(!empty($this->testEmail)) {
-            $data = array_merge($data, [
-                'testFlag' => true,
-                'testEMail' => $this->testEmail
-            ]);
+        if ($this->testEmail !== null && $this->testEmail !== '') {
+            $payload['testFlag'] = true;
+            $payload['testEMail'] = $this->testEmail;
         }
 
-        $options = [
-            'headers' => [ 'Content-Type' => 'application/json' ],
-            'body'    => json_encode([$data]),
-        ];
+        return $payload;
+    }
 
-        try {
-            $response = $this->getHttpClient(static::API_ENDPOINT)
-                ->request('POST', '/api/Letter', $options);
-        } catch (ClientException $e) {
-            $this->throwErrorException($e);
-        }
-
-        $data = \GuzzleHttp\json_decode($response->getBody()->getContents(), true);
-
-        $this->setLetterId($data[0]['letterID']);
-
+    public function send(): self
+    {
+        $results = $this->postLetters([$this->buildLetterPayload()]);
+        $this->letterId = (string) $results[0]->getLetterId();
         return $this;
     }
 
     /**
-     * Get a http client by given base uri and set the access token header
-     *
-     * @param string $baseUri
-     *
-     * @return HttpClient
+     * @param Letter[] $letters
+     * @return LetterSendResult[]
      */
-    private function getHttpClient($baseUri): HttpClient
+    public function sendBatch(array $letters): array
     {
-        return new HttpClient(
-            [
-                'base_uri' => $baseUri,
-                'headers'  => [
-                    'Authorization' => 'Bearer '. $this->getAccessToken()->getToken(),
-                ],
-            ]
-        );
+        if ($letters === []) {
+            return [];
+        }
+        $payloads = [];
+        foreach ($letters as $letter) {
+            if (!$letter instanceof Letter) {
+                throw new \InvalidArgumentException('All items must be Letter instances');
+            }
+            $payloads[] = $letter->buildLetterPayload();
+        }
+        return $this->postLetters($payloads);
     }
 
     /**
-     * Throws an exception
-     *
-     * @param $e
+     * @param array<int, array<string, mixed>> $payloads
+     * @return LetterSendResult[]
      */
-    protected function throwErrorException($e): void
+    private function postLetters(array $payloads): array
     {
+        $requestOptions = [
+            'headers' => ['Content-Type' => 'application/json'],
+            'body' => json_encode($payloads),
+        ];
+        try {
+            $response = $this->getHttpClient(self::API_ENDPOINT)
+                ->request('POST', '/api/Letter', $requestOptions);
+        } catch (ClientException $e) {
+            $this->throwErrorException($e);
+        }
+        $decoded = json_decode($response->getBody()->getContents(), true) ?? [];
+        return array_map(fn (array $item) => LetterSendResult::fromArray($item), $decoded);
+    }
+
+    public function getLetterStatus(?string $letterId = null): LetterStatus
+    {
+        $id = $letterId ?? $this->getLetterId();
+        try {
+            $response = $this->getHttpClient(self::API_ENDPOINT)
+                ->request('GET', '/api/Letter/' . $id);
+        } catch (ClientException $e) {
+            $this->throwErrorException($e);
+        }
+        return new LetterStatus(json_decode($response->getBody()->getContents(), true));
+    }
+
+    /**
+     * @param int[] $letterIds
+     * @return LetterStatus[]
+     */
+    public function getMultipleLetterStatuses(array $letterIds = [], bool $onlyIssues = false): array
+    {
+        $requestOptions = [
+            'headers' => ['Content-Type' => 'application/json'],
+            'body' => json_encode($letterIds),
+        ];
+        try {
+            $response = $this->getHttpClient(self::API_ENDPOINT)
+                ->request('POST', '/api/Letter/StatusQuery?onlyIssues=' . ($onlyIssues ? 'true' : 'false'), $requestOptions);
+        } catch (ClientException $e) {
+            $this->throwErrorException($e);
+        }
+        $decoded = json_decode($response->getBody()->getContents(), true) ?? [];
+        return array_map(fn (array $item) => new LetterStatus($item), $decoded);
+    }
+
+    /**
+     * @return LetterStatus[]
+     */
+    public function getLetterStatusByDateRange(string $fromDate, string $tillDate, bool $onlyIssues = false): array
+    {
+        $response = $this->getHttpClient(self::API_ENDPOINT)->request('GET', '/api/Letter/Date', [
+            'query' => [
+                'fromDate' => $fromDate,
+                'tillDate' => $tillDate,
+                'onlyIssues' => $onlyIssues ? 'true' : 'false',
+            ],
+        ]);
+        $decoded = json_decode($response->getBody()->getContents(), true) ?? [];
+        return array_map(fn (array $item) => new LetterStatus($item), $decoded);
+    }
+
+    /**
+     * @return LetterStatus[]
+     */
+    public function getOpenLetters(): array
+    {
+        $response = $this->getHttpClient(self::API_ENDPOINT)->request('GET', '/api/Letter/Open');
+        $decoded = json_decode($response->getBody()->getContents(), true) ?? [];
+        return array_map(fn (array $item) => new LetterStatus($item), $decoded);
+    }
+
+    /**
+     * @return LetterStatus[]
+     */
+    public function getRegisteredLetterStatus(string $fromDate, string $tillDate, bool $onlyOpen = false): array
+    {
+        $response = $this->getHttpClient(self::API_ENDPOINT)->request('GET', '/api/Letter/Registered', [
+            'query' => [
+                'fromDate' => $fromDate,
+                'tillDate' => $tillDate,
+                'onlyOpen' => $onlyOpen ? 'true' : 'false',
+            ],
+        ]);
+        $decoded = json_decode($response->getBody()->getContents(), true) ?? [];
+        return array_map(fn (array $item) => new LetterStatus($item), $decoded);
+    }
+
+    /**
+     * @return LetterStatus[]
+     */
+    public function getLetterStatusByCustom1(string $custom1): array
+    {
+        $response = $this->getHttpClient(self::API_ENDPOINT)->request('GET', '/api/Letter/Custom1', [
+            'query' => ['custom1' => $custom1],
+        ]);
+        $decoded = json_decode($response->getBody()->getContents(), true) ?? [];
+        return array_map(fn (array $item) => new LetterStatus($item), $decoded);
+    }
+
+    /**
+     * @return LetterStatus[]
+     */
+    public function getLetterStatusByBatch(int $batchId): array
+    {
+        $response = $this->getHttpClient(self::API_ENDPOINT)->request('GET', '/api/Letter/Batch', [
+            'query' => ['batchID' => $batchId],
+        ]);
+        $decoded = json_decode($response->getBody()->getContents(), true) ?? [];
+        return array_map(fn (array $item) => new LetterStatus($item), $decoded);
+    }
+
+    /**
+     * @param int[] $letterIds
+     * @return QueuedOperationResult[]
+     */
+    public function cancelQueued(array $letterIds): array
+    {
+        $requestOptions = [
+            'headers' => ['Content-Type' => 'application/json'],
+            'body' => json_encode($letterIds),
+        ];
+        $response = $this->getHttpClient(self::API_ENDPOINT)->request('POST', '/api/Letter/CancelQueued', $requestOptions);
+        $decoded = json_decode($response->getBody()->getContents(), true) ?? [];
+        return array_map(fn (array $item) => QueuedOperationResult::fromArray($item), $decoded);
+    }
+
+    /**
+     * @param int[] $letterIds
+     * @return QueuedOperationResult[]
+     */
+    public function releaseQueued(array $letterIds): array
+    {
+        $requestOptions = [
+            'headers' => ['Content-Type' => 'application/json'],
+            'body' => json_encode($letterIds),
+        ];
+        $response = $this->getHttpClient(self::API_ENDPOINT)->request('POST', '/api/Letter/ReleaseQueued', $requestOptions);
+        $decoded = json_decode($response->getBody()->getContents(), true) ?? [];
+        return array_map(fn (array $item) => QueuedOperationResult::fromArray($item), $decoded);
+    }
+
+    /**
+     * @return LetterStatus[]
+     */
+    public function getPremiumAdressFeedback(string $fromDate, string $tillDate): array
+    {
+        $response = $this->getHttpClient(self::API_ENDPOINT)->request('GET', '/api/Letter/PremiumAdressFeedback', [
+            'query' => ['fromDate' => $fromDate, 'tillDate' => $tillDate],
+        ]);
+        $decoded = json_decode($response->getBody()->getContents(), true) ?? [];
+        return array_map(fn (array $item) => new LetterStatus($item), $decoded);
+    }
+
+    /**
+     * @param string|null $letterId Letter ID for the test send (defaults to current letter ID if set)
+     */
+    public function getTestResult(?string $letterId = null): LetterDataResult
+    {
+        $id = $letterId ?? $this->getLetterId();
+        $response = $this->getHttpClient(self::API_ENDPOINT)->request('GET', '/api/Letter/TestResult', [
+            'query' => ['letterID' => $id],
+        ]);
+        return LetterDataResult::fromArray(json_decode($response->getBody()->getContents(), true) ?? []);
+    }
+
+    private function getHttpClient(string $baseUri): HttpClient
+    {
+        if ($this->httpClient !== null) {
+            return $this->httpClient;
+        }
+        return new HttpClient([
+            'base_uri' => $baseUri,
+            'headers' => [
+                'Authorization' => 'Bearer ' . $this->getAccessToken()->getToken(),
+            ],
+        ]);
+    }
+
+    protected function throwErrorException(ClientException $e): never
+    {
+        $body = $e->getResponse()->getBody()->getContents();
         throw new Exception\ErrorException(
-            new Error(
-                \GuzzleHttp\json_decode(
-                    $e->getResponse()->getBody()->getContents(),
-                    true
-                )
-            )
+            Error::fromArray(json_decode($body, true) ?? [])
         );
     }
 }
