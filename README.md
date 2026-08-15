@@ -16,7 +16,7 @@ See [UPGRADE.md](UPGRADE.md) for migration instructions when upgrading between v
 
 ## Requirements
 
-- PHP ^8.1
+- PHP ^8.5
 - guzzlehttp/guzzle ^7.0.1
 
 ## Usage
