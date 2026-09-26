@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `LetterStatus::errorsOnly()`, `warnings()`, `registeredMailType()`, `trackingStatus()`
 - `Recipient::NO_ZIP_CODE` and `Recipient::forAutomover()`
 - CI on PHP 8.3, 8.4 and 8.5; PHPUnit 13 supported
+- Runnable example scripts under `examples/`, framework integration notes in `docs/integration.md`, a release checklist in `RELEASING.md` and generated release-note categories
 
 ### Removed
 

@@ -19,7 +19,9 @@ their delivery, manage queued letters and estimate postage.
 - Local price calculator based on the official Deutsche Post price lists
 - Tested against a mocked API on PHP 8.3 to 8.5 with 100% line coverage enforced in CI
 
-Upgrading from 1.x? See [UPGRADE.md](UPGRADE.md).
+Upgrading from 1.x? See [UPGRADE.md](UPGRADE.md). Runnable scripts are in
+[`examples/`](examples/README.md), and [`docs/integration.md`](docs/integration.md)
+shows how to wire the client into Laravel, Symfony or any PSR-11 container.
 
 ## Scope
 
