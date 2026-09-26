@@ -168,6 +168,24 @@ $result = $client->sendLetter($letter->test(new TestOptions('test@example.com', 
 $pdf = $client->getTestResult($result->letterId)->pdf();
 ```
 
+To check the address placement locally before sending, without an API call,
+use the companion package
+[quosimadu/epost-letter-template-check](https://github.com/quosimadu/epost-api-letter-template-check).
+It measures the address text on the first page against the address-window
+template and reports every violation:
+
+```php
+use Quosimadu\EpostLetterTemplateCheck\AddressPlacementValidator;
+
+$report = (new AddressPlacementValidator())->validateContent($letter->getDocument()->contents);
+
+if (!$report->isValid()) {
+    foreach ($report->errors() as $issue) {
+        echo $issue->message, "\n";   // e.g. text in the DV-Freimachung area, sender on two lines
+    }
+}
+```
+
 ### International letters
 
 ```php

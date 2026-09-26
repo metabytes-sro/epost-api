@@ -57,7 +57,8 @@
         "psr/simple-cache": "^3.0"
     },
     "suggest": {
-        "psr/simple-cache-implementation": "To cache the API token across requests with Auth\\CachedTokenProvider"
+        "psr/simple-cache-implementation": "To cache the API token across requests with Auth\\CachedTokenProvider",
+        "quosimadu/epost-letter-template-check": "To check the address placement of a letter PDF against the address-window template before sending"
     },
     "autoload": {
         "psr-4": {

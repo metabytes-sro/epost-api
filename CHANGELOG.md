@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- README and composer suggestion for quosimadu/epost-letter-template-check, which checks the address placement of a letter PDF locally before sending.
+
 ## [2.0.0] - 2026-09-26
 
 ### Changed
