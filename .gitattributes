@@ -1,0 +1,16 @@
+# Keep the distributed package lean: everything listed here is left out of
+# the archive Composer downloads (composer install --prefer-dist).
+/.editorconfig          export-ignore
+/.gitattributes         export-ignore
+/.github/               export-ignore
+/.gitignore             export-ignore
+/.php-cs-fixer.dist.php export-ignore
+/CONTRIBUTING.md        export-ignore
+/SECURITY.md            export-ignore
+/docs/                  export-ignore
+/phpstan.neon.dist      export-ignore
+/phpunit.xml.dist       export-ignore
+/tests/                 export-ignore
+
+# Normalise line endings.
+* text=auto eol=lf

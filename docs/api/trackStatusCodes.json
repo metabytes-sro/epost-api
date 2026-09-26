@@ -1,0 +1,142 @@
+[
+  {
+    "statusCode": "ANNOUNCED",
+    "description": "Die Sendung wurde (vor)angekündigt. Eine Einlieferung erfolgte noch nicht.",
+    "final": "false"
+  },
+  {
+    "statusCode": "INITIATED",
+    "description": "Das Label (Funketikett) für den Auslieferungsnachweis wurde aktiviert.",
+    "final": "false"
+  },
+  {
+    "statusCode": "POSTED",
+    "description": "Die Sendung wurde eingeliefert.",
+    "final": "false"
+  },
+  {
+    "statusCode": "PASSED_LETTER_CENTER",
+    "description": "Die Sendung wurde im Briefzentrum verarbeitet.",
+    "final": "false"
+  },
+  {
+    "statusCode": "IN_DELIVERY",
+    "description": "Die Sendung befindet sich in der Zustellung.",
+    "final": "false"
+  },
+  {
+    "statusCode": "REDIRECTED",
+    "description": "Sendung wird nachgesandt.",
+    "final": "false"
+  },
+  {
+    "statusCode": "NOTIFIED",
+    "description": "Der Empfänger konnte nicht angetroffen werden und wurde vom Zusteller benachrichtigt.",
+    "final": "false"
+  },
+  {
+    "statusCode": "NOTIFIED_KEY_ACCOUNT",
+    "description": "Die Sendung wurde für die Auslieferung an einen Großkunden (Empfänger) bereitgestellt.",
+    "final": "false"
+  },
+  {
+    "statusCode": "NOTIFIED_PO_BOX",
+    "description": "Die Benachrichtigung für die Sendung wurde in das Postfach des Empfängers eingelegt.",
+    "final": "false"
+  },
+  {
+    "statusCode": "NOTIFIED_PACKSTATION",
+    "description": "Die Sendung wurde in die Packstation eingelegt.",
+    "final": "false"
+  },
+  {
+    "statusCode": "SENT_BACK",
+    "description": "Die Sendung geht an den Absender zurück.",
+    "final": "false"
+  },
+  {
+    "statusCode": "DELIVERED",
+    "description": "Die Sendung wurde zugestellt.",
+    "final": "true"
+  },
+  {
+    "statusCode": "MARBURG",
+    "description": "Die Sendung lagert / lagerte in Briefermittlung Marburg.",
+    "final": "true"
+  },
+  {
+    "statusCode": "FETCHED_PACKSTATION",
+    "description": "Die Sendung wurde aus der Packstation abgeholt",
+    "final": "true"
+  },
+  {
+    "statusCode": "FETCHED",
+    "description": "Die Sendung wurde ausgeliefert.",
+    "final": "true"
+  },
+  {
+    "statusCode": "FETCHED_NOTIFIED",
+    "description": "Die Sendung wurde nach Benachrichtigung abgeholt.",
+    "final": "true"
+  },
+  {
+    "statusCode": "DELIVERED_PO_BOX",
+    "description": "Auslieferung via Postfach",
+    "final": "true"
+  },
+  {
+    "statusCode": "CONFIRMED",
+    "description": "Der Empfang der Sendung wurde vom Großkunden (Empfänger) quittiert.",
+    "final": "true"
+  },
+  {
+    "statusCode": "CONFIRMATION_PENDING",
+    "description": "Sendung wurde vom Großkunden (Empfänger) angenommen, aber der Auslieferungsbeleg liegt noch nicht vor.",
+    "final": "true"
+  },
+  {
+    "statusCode": "FETCHED_PENDING_DELIVERY_CONFIRMATION",
+    "description": "Benachrichtigte / postlagernde Sendung wurde vom Empfänger abgeholt, aber der Auslieferungsbeleg liegt noch nicht vor.",
+    "final": "true"
+  },
+  {
+    "statusCode": "FETCHED_PO_BOX_PENDING_DELIVERY_CONFIRMATION",
+    "description": "Zeigt an, dass die Sendung an einen Postfach-Kunden ausgegeben wurde, der Auslieferungsbeleg aber noch fehlt bzw. noch nicht erfasst wurde.",
+    "final": "true"
+  },
+  {
+    "statusCode": "FETCHED_KEY_ACCOUNT_PENDING_DELIVERY_CONFIRMATION",
+    "description": "Die Sendung wurde ausgeliefert, aber der Auslieferungsbeleg liegt noch nicht vor.",
+    "final": "true"
+  },
+  {
+    "statusCode": "RETURNED_TO_SENDER",
+    "description": "Die Sendung wurde dem Absender zugestellt.",
+    "final": "true"
+  },
+  {
+    "statusCode": "CONFIRMED_BY_SENDER",
+    "description": "Der Empfang der unzustellbaren Sendung wurde vom Großkunden (Absender) quittiert.",
+    "final": "true"
+  },
+  {
+    "statusCode": "UNDELIVERABLE",
+    "description": "Die Sendung ist unanbringlich. Sie konnte weder dem Empfänger noch dem Absender zugestellt werden. Sie wird an die Briefermittlungsstelle nach Marburg abgeleitet.",
+    "final": "false"
+  },
+  {
+    "statusCode": "NO_INFO",
+    "description": "Es liegen keine Informationen zur Sendung mit der angegebenen Sendungsnummer vor.",
+    "final": "false"
+  },
+  {
+    "statusCode": "AMBIGUOUS",
+    "description": "Die vorliegenden Sendungsinformationen lassen keine eindeutige Statusbildung zu.",
+    "final": "true"
+  },
+  {
+    "statusCode": "POSTED_WRONG_DATE",
+    "description": "Das angegebene Einlieferungsdatum ist falsch.",
+    "final": "false"
+  }
+]
