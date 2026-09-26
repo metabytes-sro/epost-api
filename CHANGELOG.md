@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-09-26
+
 ### Changed
 
 - **BREAKING:** requires PHP 8.3. Version 1.x stays supported on the `1.x` branch for PHP 8.1 and 8.2.
@@ -125,6 +127,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Class docblocks for Letter and Login: timeouts/connection errors are not caught by caller
 - README: pricing examples, environment variables, Einschreiben tracking
 
-[Unreleased]: https://github.com/metabytes-sro/epost-api/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/metabytes-sro/epost-api/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/metabytes-sro/epost-api/compare/v1.1.0...v2.0.0
 [1.1.0]: https://github.com/metabytes-sro/epost-api/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/metabytes-sro/epost-api/compare/v0.11-beta...v1.0.0
