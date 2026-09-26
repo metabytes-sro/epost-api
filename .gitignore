@@ -2,12 +2,23 @@
 composer.lock
 vendor/
 
+# Build output and tool caches
+build/
+
 # IDE
 .idea/
+.vscode/
 
 # OS
 .DS_Store
 Thumbs.db
 
-# PHPUnit
-.phpunit.cache/
+# Local overrides
+.env
+.php-cs-fixer.php
+phpstan.neon
+phpunit.xml
+
+# Local workaround for environments without GitHub API access
+composer.local.json
+composer.local.lock
