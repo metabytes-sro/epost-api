@@ -18,8 +18,7 @@ class LetterPriceCalculator
 {
     public function __construct(
         private readonly PriceConfig $config,
-    ) {
-    }
+    ) {}
 
     public static function fromEnv(): self
     {
@@ -29,10 +28,10 @@ class LetterPriceCalculator
     /**
      * Calculate the price for a single letter.
      *
-     * @param int  $weightInGrams   Letter weight in grams (incl. envelope)
-     * @param int  $pageCount     Number of pages
-     * @param bool $isColor       Color (true) or B/W (false)
-     * @param bool $isDuplex      Duplex (true) or simplex (false)
+     * @param int $weightInGrams Letter weight in grams (incl. envelope)
+     * @param int $pageCount Number of pages
+     * @param bool $isColor Color (true) or B/W (false)
+     * @param bool $isDuplex Duplex (true) or simplex (false)
      * @param bool $isInternational International shipment
      */
     public function calculate(

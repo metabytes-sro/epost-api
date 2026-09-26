@@ -8,7 +8,9 @@ namespace MetabytesSRO\EPost\Api\Pricing;
  * Price configuration with optional environment variable overrides.
  *
  * Set EPOST_TARIFF to "basis" or "250plus" (default: basis).
- * Set EPOST_PRICES_JSON to a JSON object to override default prices.
+ * Set EPOST_PRICES_JSON to a JSON object to override default prices. Overrides
+ * are merged into the defaults, so a partial object (for example only the
+ * negotiated national "basis" prices) keeps every other price intact.
  *
  * JSON structure:
  * {
@@ -17,8 +19,10 @@ namespace MetabytesSRO\EPost\Api\Pricing;
  *   "international_druck": { "basis": {...}, "250plus": {...} }
  * }
  *
- * Each tariff/scope has: standard, kompakt, gross with sw_simplex, sw_duplex, color_simplex, color_duplex.
- * Plus "per_sheet" with same 4 keys.
+ * Each tariff has "standard", "kompakt", "gross" and "per_sheet", each with
+ * "sw_simplex", "sw_duplex", "color_simplex" and "color_duplex" prices in EUR.
+ *
+ * Prices are valid from 01.01.2025.
  *
  * @see https://www.deutschepost.de/dam/jcr:4f6b160f-5beb-470a-9891-81e02acdd6e6/dp-epost-preisliste-mailer-basis_250+-ab%2001012025.pdf
  * @see https://www.deutschepost.de/dam/jcr:d7e72ba2-a855-4b1d-9300-3c5c6745bf86/dp-epost-preisliste-international-mailer-basis-ab-01012025_vf.pdf
@@ -29,24 +33,36 @@ class PriceConfig
     public const TARIFF_250PLUS = '250plus';
 
     /** @var array<string, array<string, array<string, float>>> */
-    private array $national;
+    private readonly array $national;
 
     /** @var array<string, float> */
-    private array $internationalPorto;
+    private readonly array $internationalPorto;
 
     /** @var array<string, array<string, array<string, float>>> */
-    private array $internationalDruck;
+    private readonly array $internationalDruck;
 
+    /**
+     * Each argument is merged into the built-in defaults, so only the prices that
+     * differ need to be given.
+     *
+     * @param array<string, array<string, array<string, float>>>|null $national
+     * @param array<string, float>|null $internationalPorto
+     * @param array<string, array<string, array<string, float>>>|null $internationalDruck
+     */
     public function __construct(
         ?array $national = null,
         ?array $internationalPorto = null,
         ?array $internationalDruck = null,
     ) {
-        $this->national = $national ?? self::getDefaultNationalPrices();
-        $this->internationalPorto = $internationalPorto ?? self::getDefaultInternationalPorto();
-        $this->internationalDruck = $internationalDruck ?? self::getDefaultInternationalDruck();
+        $this->national = array_replace_recursive(self::getDefaultNationalPrices(), $national ?? []);
+        $this->internationalPorto = array_replace(self::getDefaultInternationalPorto(), $internationalPorto ?? []);
+        $this->internationalDruck = array_replace_recursive(self::getDefaultInternationalDruck(), $internationalDruck ?? []);
     }
 
+    /**
+     * Build the configuration from the EPOST_PRICES_JSON environment variable.
+     * Invalid JSON or values that are not numbers are ignored.
+     */
     public static function fromEnv(): self
     {
         $json = getenv('EPOST_PRICES_JSON');
@@ -54,18 +70,25 @@ class PriceConfig
             $decoded = json_decode($json, true);
             if (is_array($decoded)) {
                 return new self(
-                    $decoded['national'] ?? null,
-                    $decoded['international_porto'] ?? null,
-                    $decoded['international_druck'] ?? null,
+                    self::priceTable($decoded['national'] ?? null),
+                    self::priceMap($decoded['international_porto'] ?? null),
+                    self::priceTable($decoded['international_druck'] ?? null),
                 );
             }
         }
+
         return new self();
     }
 
+    /**
+     * Tariff from the EPOST_TARIFF environment variable: "250plus" (or "250+") or "basis".
+     *
+     * @phpstan-impure
+     */
     public function getTariff(): string
     {
         $tariff = getenv('EPOST_TARIFF');
+
         return ($tariff === '250plus' || $tariff === '250+') ? self::TARIFF_250PLUS : self::TARIFF_BASIS;
     }
 
@@ -91,6 +114,48 @@ class PriceConfig
     public function getInternationalPrintPrice(): array
     {
         return $this->internationalDruck;
+    }
+
+    /**
+     * @return array<string, float>|null
+     */
+    private static function priceMap(mixed $value): ?array
+    {
+        if (!is_array($value)) {
+            return null;
+        }
+        $map = [];
+        foreach ($value as $key => $price) {
+            if (is_int($price) || is_float($price) || (is_string($price) && is_numeric($price))) {
+                $map[(string) $key] = (float) $price;
+            }
+        }
+
+        return $map;
+    }
+
+    /**
+     * @return array<string, array<string, array<string, float>>>|null
+     */
+    private static function priceTable(mixed $value): ?array
+    {
+        if (!is_array($value)) {
+            return null;
+        }
+        $table = [];
+        foreach ($value as $tariff => $formats) {
+            if (!is_array($formats)) {
+                continue;
+            }
+            foreach ($formats as $format => $prices) {
+                $map = self::priceMap($prices);
+                if ($map !== null) {
+                    $table[(string) $tariff][(string) $format] = $map;
+                }
+            }
+        }
+
+        return $table;
     }
 
     /**

@@ -15,15 +15,17 @@ class QueuedOperationResult
         private readonly string $message,
         private readonly ?int $letterId = null,
         private readonly ?bool $successful = null,
-    ) {
-    }
+    ) {}
 
+    /**
+     * @param array<string, mixed> $data
+     */
     public static function fromArray(array $data): self
     {
         return new self(
-            $data['message'] ?? '',
-            isset($data['letterID']) ? (int) $data['letterID'] : null,
-            isset($data['successful']) ? (bool) $data['successful'] : null,
+            Json::string($data['message'] ?? null) ?? '',
+            Json::int($data['letterID'] ?? null),
+            isset($data['successful']) ? Json::bool($data['successful']) : null,
         );
     }
 

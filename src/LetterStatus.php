@@ -4,21 +4,31 @@ declare(strict_types=1);
 
 namespace MetabytesSRO\EPost\Api;
 
+/**
+ * Status of a letter as returned by the status endpoints of the API.
+ *
+ * Dates are returned as the API sends them, ISO 8601 strings such as
+ * "2024-01-15T10:30:00", and are null when the letter has not reached that step.
+ *
+ * @see https://api.epost.docuguide.com/swagger/v2/swagger.json LetterStatus schema
+ */
 class LetterStatus
 {
+    /**
+     * @param array<string, mixed> $data Raw LetterStatus object from the API
+     */
     public function __construct(
         private readonly array $data,
-    ) {
-    }
+    ) {}
 
     public function getLetterId(): int
     {
-        return (int) ($this->data['letterID'] ?? 0);
+        return $this->int('letterID') ?? 0;
     }
 
     public function getStatusId(): int
     {
-        return (int) ($this->data['statusID'] ?? 0);
+        return $this->int('statusID') ?? 0;
     }
 
     /**
@@ -27,82 +37,177 @@ class LetterStatus
     public function getStatus(): ?LetterStatusId
     {
         $statusId = $this->getStatusId();
+
         return $statusId > 0 ? LetterStatusId::fromStatusId($statusId) : null;
+    }
+
+    /**
+     * True while the letter is still being processed (status 1 to 3).
+     */
+    public function isOpen(): bool
+    {
+        return $this->getStatus()?->isOpen() ?? false;
+    }
+
+    /**
+     * True once the print centre reported the letter as sent (status 4).
+     */
+    public function isSent(): bool
+    {
+        return $this->getStatus()?->isSent() ?? false;
+    }
+
+    /**
+     * True when processing failed (status 99). The reasons are in getErrors().
+     */
+    public function hasError(): bool
+    {
+        return $this->getStatus()?->isError() ?? false;
     }
 
     public function getFileName(): ?string
     {
-        return isset($this->data['fileName']) ? (string) $this->data['fileName'] : null;
+        return $this->string('fileName');
     }
 
     public function getStatusDetails(): ?string
     {
-        return isset($this->data['statusDetails']) ? (string) $this->data['statusDetails'] : null;
+        return $this->string('statusDetails');
     }
 
+    /** Time the letter was accepted. */
     public function getCreatedDate(): ?string
     {
-        return isset($this->data['createdDate']) ? (string) $this->data['createdDate'] : null;
+        return $this->string('createdDate');
     }
 
+    /** Time the PDF was processed (status 2). */
     public function getProcessedDate(): ?string
     {
-        return isset($this->data['processedDate']) ? (string) $this->data['processedDate'] : null;
+        return $this->string('processedDate');
     }
 
+    /** Time the letter was transferred to the print centre (status 3). */
     public function getPrintUploadDate(): ?string
     {
-        return isset($this->data['printUploadDate']) ? (string) $this->data['printUploadDate'] : null;
+        return $this->string('printUploadDate');
     }
 
+    /** Time the print centre reported the letter as sent (status 4). */
     public function getPrintFeedbackDate(): ?string
     {
-        return isset($this->data['printFeedbackDate']) ? (string) $this->data['printFeedbackDate'] : null;
+        return $this->string('printFeedbackDate');
     }
 
     public function isTestFlag(): bool
     {
-        return (bool) ($this->data['testFlag'] ?? false);
+        return $this->bool('testFlag');
     }
 
     public function getTestEmail(): ?string
     {
-        return isset($this->data['testEMail']) ? (string) $this->data['testEMail'] : null;
+        return $this->string('testEMail');
+    }
+
+    public function isTestShowRestrictedArea(): bool
+    {
+        return $this->bool('testShowRestrictedArea');
+    }
+
+    /**
+     * Registered-mail option the letter was sent with, one of the
+     * DeliveryOptions::OPTION_REGISTERED_* values, or null for an ordinary letter.
+     */
+    public function getRegisteredLetter(): ?string
+    {
+        return $this->string('registeredLetter');
+    }
+
+    public function isRegisteredLetter(): bool
+    {
+        return $this->getRegisteredLetter() !== null && $this->getRegisteredLetter() !== '';
     }
 
     public function getBatchId(): ?int
     {
-        return isset($this->data['batchID']) ? (int) $this->data['batchID'] : null;
+        return $this->int('batchID');
+    }
+
+    public function hasCoverLetter(): bool
+    {
+        return $this->bool('coverLetter');
+    }
+
+    public function getNumberOfPages(): ?int
+    {
+        return $this->int('noOfPages');
+    }
+
+    /** Partner-managed customer identifier (vendorSubID at login), when set. */
+    public function getSubVendorId(): ?string
+    {
+        return $this->string('subVendorID');
     }
 
     public function getCustom1(): ?string
     {
-        return isset($this->data['custom1']) ? (string) $this->data['custom1'] : null;
+        return $this->string('custom1');
     }
 
     public function getCustom2(): ?string
     {
-        return isset($this->data['custom2']) ? (string) $this->data['custom2'] : null;
+        return $this->string('custom2');
     }
 
     public function getCustom3(): ?string
     {
-        return isset($this->data['custom3']) ? (string) $this->data['custom3'] : null;
+        return $this->string('custom3');
     }
 
     public function getCustom4(): ?string
     {
-        return isset($this->data['custom4']) ? (string) $this->data['custom4'] : null;
+        return $this->string('custom4');
     }
 
     public function getCustom5(): ?string
     {
-        return isset($this->data['custom5']) ? (string) $this->data['custom5'] : null;
+        return $this->string('custom5');
     }
 
+    /** Recipient zip code. */
+    public function getZipCode(): ?string
+    {
+        return $this->string('zipCode');
+    }
+
+    /** Recipient city. */
+    public function getCity(): ?string
+    {
+        return $this->string('city');
+    }
+
+    /** Recipient country, empty or null for domestic letters. */
+    public function getCountry(): ?string
+    {
+        return $this->string('country');
+    }
+
+    public function isColor(): bool
+    {
+        return $this->bool('isColor');
+    }
+
+    public function isDuplex(): bool
+    {
+        return $this->bool('isDuplex');
+    }
+
+    /**
+     * Registered-mail tracking number, assigned once the letter reached the print centre (status 3).
+     */
     public function getRegisteredLetterId(): ?string
     {
-        return isset($this->data['registeredLetterID']) ? (string) $this->data['registeredLetterID'] : null;
+        return $this->string('registeredLetterID');
     }
 
     /**
@@ -111,7 +216,7 @@ class LetterStatus
      */
     public function getRegisteredLetterStatus(): ?string
     {
-        return isset($this->data['registeredLetterStatus']) ? (string) $this->data['registeredLetterStatus'] : null;
+        return $this->string('registeredLetterStatus');
     }
 
     /**
@@ -119,7 +224,49 @@ class LetterStatus
      */
     public function getRegisteredLetterStatusDate(): ?string
     {
-        return isset($this->data['registeredLetterStatusDate']) ? (string) $this->data['registeredLetterStatusDate'] : null;
+        return $this->string('registeredLetterStatusDate');
+    }
+
+    public function getVendorSystemInformation(): ?string
+    {
+        return $this->string('vendorSystemInformation');
+    }
+
+    /** Cost centre the letter is billed to, when one was given. */
+    public function getCostCenter(): ?string
+    {
+        return $this->string('costCenter');
+    }
+
+    /**
+     * Franking ID of the letter, assigned after successful processing in the print centre (status 4).
+     */
+    public function getFrankierId(): ?string
+    {
+        return $this->string('frankierID');
+    }
+
+    /** Latest status of the letter's arrival in the destination area. */
+    public function getDestinationAreaStatus(): ?string
+    {
+        return $this->string('destinationAreaStatus');
+    }
+
+    /** Date of the latest destination area status. */
+    public function getDestinationAreaStatusDate(): ?string
+    {
+        return $this->string('destinationAreaStatusDate');
+    }
+
+    /**
+     * Feedback of the plugins the letter was sent with, as raw arrays with
+     * "plugInName" and "plugInFeedbackModel" keys.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function getPlugInFeedback(): array
+    {
+        return Json::objectList($this->data['plugInFeedbackList'] ?? null);
     }
 
     /**
@@ -131,11 +278,40 @@ class LetterStatus
     }
 
     /**
+     * The raw LetterStatus object as received from the API.
+     *
+     * @return array<string, mixed>
+     */
+    public function toArray(): array
+    {
+        return $this->data;
+    }
+
+    /**
+     * Errors, warnings and infos reported for the letter.
+     *
      * @return LetterStatusError[]
      */
     public function getErrors(): array
     {
-        $list = $this->data['errorList'] ?? [];
-        return array_map(fn (array $item) => LetterStatusError::fromArray($item), $list);
+        return array_map(
+            static fn(array $item) => LetterStatusError::fromArray($item),
+            Json::objectList($this->data['errorList'] ?? null),
+        );
+    }
+
+    private function string(string $key): ?string
+    {
+        return Json::string($this->data[$key] ?? null);
+    }
+
+    private function int(string $key): ?int
+    {
+        return Json::int($this->data[$key] ?? null);
+    }
+
+    private function bool(string $key): bool
+    {
+        return Json::bool($this->data[$key] ?? null);
     }
 }

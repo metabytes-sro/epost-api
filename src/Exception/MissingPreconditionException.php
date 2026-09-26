@@ -6,6 +6,7 @@ namespace MetabytesSRO\EPost\Api\Exception;
 
 use LogicException;
 
-class MissingPreconditionException extends LogicException
-{
-}
+/**
+ * Base class for "something required was not set before calling this" errors.
+ */
+class MissingPreconditionException extends LogicException implements EPostException {}

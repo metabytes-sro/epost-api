@@ -14,18 +14,28 @@ class LetterDataResultTest extends TestCase
         $result = LetterDataResult::fromArray([
             'letterID' => 12345,
             'fileName' => 'test.pdf',
-            'data' => 'base64encodedcontent',
+            'data' => base64_encode('%PDF-1.4 content'),
         ]);
-        $this->assertSame(12345, $result->getLetterId());
-        $this->assertSame('test.pdf', $result->getFileName());
-        $this->assertSame('base64encodedcontent', $result->getData());
+
+        self::assertSame(12345, $result->getLetterId());
+        self::assertSame('test.pdf', $result->getFileName());
+        self::assertSame(base64_encode('%PDF-1.4 content'), $result->getData());
+        self::assertSame('%PDF-1.4 content', $result->getPdf());
     }
 
     public function testFromArrayWithEmptyData(): void
     {
         $result = LetterDataResult::fromArray([]);
-        $this->assertNull($result->getLetterId());
-        $this->assertNull($result->getFileName());
-        $this->assertNull($result->getData());
+
+        self::assertNull($result->getLetterId());
+        self::assertNull($result->getFileName());
+        self::assertNull($result->getData());
+        self::assertNull($result->getPdf());
+    }
+
+    public function testGetPdfWithInvalidBase64(): void
+    {
+        self::assertNull(LetterDataResult::fromArray(['data' => '%%%'])->getPdf());
+        self::assertNull(LetterDataResult::fromArray(['data' => ''])->getPdf());
     }
 }

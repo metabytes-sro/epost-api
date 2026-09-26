@@ -4,366 +4,306 @@ declare(strict_types=1);
 
 namespace MetabytesSRO\EPost\Api\Tests;
 
-use GuzzleHttp\Client as HttpClient;
-use GuzzleHttp\Handler\MockHandler;
-use GuzzleHttp\HandlerStack;
-use GuzzleHttp\Psr7\Response;
-use MetabytesSRO\EPost\Api\AccessToken;
+use GuzzleHttp\Client;
+use GuzzleHttp\ClientInterface;
+use InvalidArgumentException;
+use MetabytesSRO\EPost\Api\Exception\InvalidFileFormat;
+use MetabytesSRO\EPost\Api\Exception\InvalidFileFormatException;
+use MetabytesSRO\EPost\Api\Exception\MissingAttachmentException;
+use MetabytesSRO\EPost\Api\Exception\MissingAuthorizationTokenException;
+use MetabytesSRO\EPost\Api\Exception\MissingEnvelopeException;
+use MetabytesSRO\EPost\Api\Exception\MissingPreconditionException;
+use MetabytesSRO\EPost\Api\Exception\MissingRecipientException;
 use MetabytesSRO\EPost\Api\Letter;
-use MetabytesSRO\EPost\Api\LetterDataResult;
-use MetabytesSRO\EPost\Api\LetterSendResult;
-use MetabytesSRO\EPost\Api\LetterStatus;
+use MetabytesSRO\EPost\Api\Metadata\DeliveryOptions;
 use MetabytesSRO\EPost\Api\Metadata\Envelope;
-use MetabytesSRO\EPost\Api\Metadata\Envelope\Recipient;
-use MetabytesSRO\EPost\Api\QueuedOperationResult;
-use PHPUnit\Framework\TestCase;
+use RuntimeException;
+use stdClass;
 
-class LetterTest extends TestCase
+/**
+ * Building a letter and its payload, without any HTTP.
+ */
+class LetterTest extends ApiTestCase
 {
     public function testBuildLetterPayloadRequiresEnvelope(): void
     {
-        $letter = new Letter();
-        $letter->setAttachment($this->createTempPdf());
-        $letter->setAccessToken($this->createMockToken());
+        $letter = (new Letter())->setAttachment($this->createTempPdf());
 
-        $this->expectException(\MetabytesSRO\EPost\Api\Exception\MissingEnvelopeException::class);
+        $this->expectException(MissingEnvelopeException::class);
+        $letter->buildLetterPayload();
+    }
+
+    public function testBuildLetterPayloadRequiresRecipient(): void
+    {
+        $letter = (new Letter())
+            ->setEnvelope(new Envelope())
+            ->setAttachment($this->createTempPdf());
+
+        $this->expectException(MissingRecipientException::class);
         $letter->buildLetterPayload();
     }
 
     public function testBuildLetterPayloadRequiresAttachment(): void
     {
-        $letter = new Letter();
-        $letter->setEnvelope($this->createEnvelope());
-        $letter->setAccessToken($this->createMockToken());
+        $letter = (new Letter())->setEnvelope($this->createEnvelope());
 
-        $this->expectException(\MetabytesSRO\EPost\Api\Exception\MissingAttachmentException::class);
+        $this->expectException(MissingAttachmentException::class);
         $letter->buildLetterPayload();
     }
 
     public function testBuildLetterPayloadDoesNotRequireAccessToken(): void
     {
-        $letter = new Letter();
-        $letter->setEnvelope($this->createEnvelope());
-        $letter->setAttachment($this->createTempPdf());
+        $letter = (new Letter())
+            ->setEnvelope($this->createEnvelope())
+            ->setAttachment($this->createTempPdf());
 
         $payload = $letter->buildLetterPayload();
-        $this->assertIsArray($payload);
+
+        self::assertArrayHasKey('data', $payload);
     }
 
-    public function testBuildLetterPayloadReturnsExpectedStructure(): void
+    public function testBuildLetterPayloadContainsRecipientAndEncodedAttachment(): void
     {
-        $letter = new Letter();
-        $letter
+        $pdf = $this->createTempPdf('%PDF-1.4 test');
+        $letter = (new Letter())
             ->setEnvelope($this->createEnvelope())
-            ->setAttachment($this->createTempPdf())
-            ->setAccessToken($this->createMockToken());
+            ->setAttachment($pdf);
 
         $payload = $letter->buildLetterPayload();
 
-        $this->assertArrayHasKey('fileName', $payload);
-        $this->assertArrayHasKey('data', $payload);
-        $this->assertArrayHasKey('addressLine1', $payload);
-        $this->assertArrayHasKey('zipCode', $payload);
-        $this->assertArrayHasKey('city', $payload);
-        $this->assertArrayHasKey('coverLetter', $payload);
+        self::assertSame('Test', $payload['addressLine1']);
+        self::assertSame('53115', $payload['zipCode']);
+        self::assertSame('Bonn', $payload['city']);
+        self::assertSame(basename($pdf), $payload['fileName']);
+        self::assertSame(chunk_split(base64_encode('%PDF-1.4 test')), $payload['data']);
+        self::assertFalse($payload['coverLetter']);
+        self::assertArrayNotHasKey('coverData', $payload);
+        self::assertArrayNotHasKey('testFlag', $payload);
+    }
+
+    public function testBuildLetterPayloadIncludesCoverLetter(): void
+    {
+        $cover = $this->createTempPdf('%PDF-1.4 cover');
+        $letter = (new Letter())
+            ->setEnvelope($this->createEnvelope())
+            ->setAttachment($this->createTempPdf())
+            ->setCoverLetter($cover);
+
+        $payload = $letter->buildLetterPayload();
+
+        self::assertSame($cover, $letter->getCoverLetter());
+        self::assertTrue($payload['coverLetter']);
+        self::assertSame(chunk_split(base64_encode('%PDF-1.4 cover')), $payload['coverData']);
+    }
+
+    public function testCoverLetterCanBeUnset(): void
+    {
+        $letter = (new Letter())
+            ->setCoverLetter($this->createTempPdf())
+            ->setCoverLetter(null);
+
+        self::assertNull($letter->getCoverLetter());
+    }
+
+    public function testBuildLetterPayloadMergesDeliveryOptions(): void
+    {
+        $options = (new DeliveryOptions())->setColorColored()->setDuplex(true)->setRegisteredStandard();
+        $letter = (new Letter())
+            ->setEnvelope($this->createEnvelope())
+            ->setAttachment($this->createTempPdf())
+            ->setDeliveryOptions($options);
+
+        $payload = $letter->buildLetterPayload();
+
+        self::assertSame($options, $letter->getDeliveryOptions());
+        self::assertTrue($payload['isColor']);
+        self::assertTrue($payload['isDuplex']);
+        self::assertSame('Einschreiben', $payload['registeredLetter']);
+    }
+
+    public function testBuildLetterPayloadSetsTestFlagForTestEmail(): void
+    {
+        $letter = (new Letter())
+            ->setEnvelope($this->createEnvelope())
+            ->setAttachment($this->createTempPdf())
+            ->setTestEmail('test@example.com');
+
+        $payload = $letter->buildLetterPayload();
+
+        self::assertSame('test@example.com', $letter->getTestEmail());
+        self::assertTrue($payload['testFlag']);
+        self::assertSame('test@example.com', $payload['testEMail']);
+    }
+
+    public function testEmptyTestEmailDoesNotSetTestFlag(): void
+    {
+        $letter = (new Letter())
+            ->setEnvelope($this->createEnvelope())
+            ->setAttachment($this->createTempPdf())
+            ->setTestEmail('');
+
+        self::assertArrayNotHasKey('testFlag', $letter->buildLetterPayload());
+    }
+
+    public function testSetAttachmentRejectsMissingFile(): void
+    {
+        $this->expectException(InvalidFileFormatException::class);
+        $this->expectExceptionMessage('does not exist');
+        (new Letter())->setAttachment('/nonexistent/file.pdf');
+    }
+
+    public function testSetAttachmentRejectsNonPdf(): void
+    {
+        $file = $this->createTempFile('.txt', 'just text');
+
+        $this->expectException(InvalidFileFormatException::class);
+        $this->expectExceptionMessage('Allowed: pdf');
+        (new Letter())->setAttachment($file);
+    }
+
+    public function testInvalidFileFormatExceptionIsCatchableUnderDeprecatedName(): void
+    {
+        try {
+            (new Letter())->setAttachment('/nonexistent/file.pdf');
+            self::fail('Expected exception');
+        } catch (InvalidFileFormat $e) {
+            self::assertInstanceOf(InvalidFileFormatException::class, $e);
+        }
+    }
+
+    public function testSetCoverLetterRejectsNonPdf(): void
+    {
+        $file = $this->createTempFile('.txt', 'just text');
+
+        $this->expectException(InvalidFileFormatException::class);
+        $this->expectExceptionMessage('cover letter');
+        (new Letter())->setCoverLetter($file);
+    }
+
+    public function testAttachmentDeletedAfterSetIsReportedWhenBuildingPayload(): void
+    {
+        $pdf = $this->createTempPdf();
+        $letter = (new Letter())->setEnvelope($this->createEnvelope())->setAttachment($pdf);
+        unlink($pdf);
+
+        $this->expectException(InvalidFileFormatException::class);
+        $this->expectExceptionMessage('could not be read');
+        @$letter->buildLetterPayload();
+    }
+
+    public function testGetAttachmentRequiresAttachment(): void
+    {
+        $this->expectException(MissingAttachmentException::class);
+        (new Letter())->getAttachment();
+    }
+
+    public function testGetAttachmentReturnsPath(): void
+    {
+        $pdf = $this->createTempPdf();
+
+        self::assertSame($pdf, (new Letter())->setAttachment($pdf)->getAttachment());
+    }
+
+    public function testGetEnvelopeReturnsEnvelope(): void
+    {
+        $envelope = $this->createEnvelope();
+
+        self::assertSame($envelope, (new Letter())->setEnvelope($envelope)->getEnvelope());
+    }
+
+    public function testGetAccessTokenRequiresToken(): void
+    {
+        $this->expectException(MissingAuthorizationTokenException::class);
+        (new Letter())->getAccessToken();
+    }
+
+    public function testGetAccessTokenReturnsToken(): void
+    {
+        $token = $this->createToken();
+
+        self::assertSame($token, (new Letter())->setAccessToken($token)->getAccessToken());
+    }
+
+    public function testGetLetterIdRequiresLetterId(): void
+    {
+        $this->expectException(MissingPreconditionException::class);
+        (new Letter())->getLetterId();
+    }
+
+    public function testGetLetterIdRejectsEmptyString(): void
+    {
+        $this->expectException(MissingPreconditionException::class);
+        (new Letter())->setLetterId('')->getLetterId();
+    }
+
+    public function testLetterIdCanBeSet(): void
+    {
+        self::assertSame('42', (new Letter())->setLetterId('42')->getLetterId());
+    }
+
+    public function testTestEnvironmentFlag(): void
+    {
+        $letter = new Letter();
+
+        self::assertFalse($letter->isTestEnvironment());
+        self::assertTrue($letter->setTestEnvironment(true)->isTestEnvironment());
     }
 
     public function testSendBatchRequiresLetterInstances(): void
     {
-        $letter = new Letter();
-        $letter->setAccessToken($this->createMockToken());
+        $letter = (new Letter())->setAccessToken($this->createToken());
 
-        $this->expectException(\InvalidArgumentException::class);
+        $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('Letter instances');
-        $letter->sendBatch([new \stdClass()]);
+        // Deliberately wrong input: the runtime check guards callers without static analysis.
+        // @phpstan-ignore argument.type
+        $letter->sendBatch([new stdClass()]);
     }
 
     public function testSendBatchReturnsEmptyForEmptyArray(): void
     {
-        $letter = new Letter();
-        $letter->setAccessToken($this->createMockToken());
-
-        $result = $letter->sendBatch([]);
-        $this->assertSame([], $result);
+        self::assertSame([], (new Letter())->sendBatch([]));
     }
 
-    public function testSendWithMockClient(): void
+    public function testSendWithoutAccessTokenFailsBeforeAnyRequest(): void
     {
-        $mock = new MockHandler([
-            new Response(200, [], json_encode([['letterID' => 99999]])),
-        ]);
-        $client = new HttpClient([
-            'handler' => HandlerStack::create($mock),
-            'base_uri' => Letter::API_ENDPOINT,
-        ]);
-        $letter = new Letter($client);
-        $letter->setAccessToken($this->createMockToken());
-        $letter->setEnvelope($this->createEnvelope());
-        $letter->setAttachment($this->createTempPdf());
+        $letter = (new Letter())
+            ->setEnvelope($this->createEnvelope())
+            ->setAttachment($this->createTempPdf());
 
+        $this->expectException(MissingAuthorizationTokenException::class);
         $letter->send();
-        $this->assertSame('99999', $letter->getLetterId());
     }
 
-    public function testSendBatchWithMockClient(): void
+    public function testDefaultHttpClientCarriesBaseUriAndBearerToken(): void
     {
-        $mock = new MockHandler([
-            new Response(200, [], json_encode([['letterID' => 12345]])),
-        ]);
-        $client = new HttpClient([
-            'handler' => HandlerStack::create($mock),
-            'base_uri' => Letter::API_ENDPOINT,
-        ]);
-        $letter = new Letter($client);
-        $letter->setAccessToken($this->createMockToken());
-        $letter->setEnvelope($this->createEnvelope());
-        $letter->setAttachment($this->createTempPdf());
+        $letter = new class extends Letter {
+            /** @var array<string, mixed> */
+            public array $config = [];
+            public ?ClientInterface $created = null;
 
-        $results = $letter->sendBatch([$letter]);
-        $this->assertCount(1, $results);
-        $this->assertInstanceOf(LetterSendResult::class, $results[0]);
-        $this->assertSame(12345, $results[0]->getLetterId());
-    }
+            /**
+             * @param array<string, mixed> $config
+             */
+            protected function createHttpClient(array $config): ClientInterface
+            {
+                $this->config = $config;
+                $this->created = parent::createHttpClient($config);
 
-    public function testGetLetterStatusWithMockClient(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, [], json_encode([
-                'letterID' => 123,
-                'statusID' => 4,
-                'fileName' => 'test.pdf',
-            ])),
-        ]);
-        $client = new HttpClient([
-            'handler' => HandlerStack::create($mock),
-            'base_uri' => Letter::API_ENDPOINT,
-        ]);
-        $letter = new Letter($client);
-        $letter->setAccessToken($this->createMockToken());
-        $letter->setLetterId('123');
+                // Never let the test reach the network.
+                throw new RuntimeException('stop');
+            }
+        };
+        $letter->setAccessToken($this->createToken())->setLetterId('1');
 
-        $status = $letter->getLetterStatus('123');
-        $this->assertInstanceOf(LetterStatus::class, $status);
-        $this->assertSame(123, $status->getLetterId());
-        $this->assertSame(4, $status->getStatusId());
-        $this->assertSame(\MetabytesSRO\EPost\Api\LetterStatusId::ProcessingInPrintingCenter, $status->getStatus());
-    }
+        try {
+            $letter->getLetterStatus();
+        } catch (RuntimeException $e) {
+            self::assertSame('stop', $e->getMessage());
+        }
 
-    public function testLetterStatusMapsStatusIdToEnum(): void
-    {
-        $status = new LetterStatus(['letterID' => 1, 'statusID' => 99]);
-        $this->assertSame(\MetabytesSRO\EPost\Api\LetterStatusId::ProcessingError, $status->getStatus());
-
-        $unknown = new LetterStatus(['letterID' => 2, 'statusID' => 50]);
-        $this->assertNull($unknown->getStatus());
-    }
-
-    public function testGetMultipleLetterStatusesWithMockClient(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, [], json_encode([
-                ['letterID' => 1, 'statusID' => 4],
-                ['letterID' => 2, 'statusID' => 4],
-            ])),
-        ]);
-        $client = new HttpClient([
-            'handler' => HandlerStack::create($mock),
-            'base_uri' => Letter::API_ENDPOINT,
-        ]);
-        $letter = new Letter($client);
-        $letter->setAccessToken($this->createMockToken());
-
-        $statuses = $letter->getMultipleLetterStatuses([1, 2]);
-        $this->assertCount(2, $statuses);
-        $this->assertSame(1, $statuses[0]->getLetterId());
-        $this->assertSame(2, $statuses[1]->getLetterId());
-    }
-
-    public function testGetLetterStatusByDateRangeWithMockClient(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, [], json_encode([['letterID' => 99, 'statusID' => 1]])),
-        ]);
-        $client = new HttpClient([
-            'handler' => HandlerStack::create($mock),
-            'base_uri' => Letter::API_ENDPOINT,
-        ]);
-        $letter = new Letter($client);
-        $letter->setAccessToken($this->createMockToken());
-
-        $statuses = $letter->getLetterStatusByDateRange('2024-01-01', '2024-01-31');
-        $this->assertCount(1, $statuses);
-        $this->assertSame(99, $statuses[0]->getLetterId());
-    }
-
-    public function testGetOpenLettersWithMockClient(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, [], json_encode([['letterID' => 10, 'statusID' => 2]])),
-        ]);
-        $client = new HttpClient([
-            'handler' => HandlerStack::create($mock),
-            'base_uri' => Letter::API_ENDPOINT,
-        ]);
-        $letter = new Letter($client);
-        $letter->setAccessToken($this->createMockToken());
-
-        $statuses = $letter->getOpenLetters();
-        $this->assertCount(1, $statuses);
-        $this->assertSame(10, $statuses[0]->getLetterId());
-    }
-
-    public function testGetRegisteredLetterStatusWithMockClient(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, [], json_encode([['letterID' => 5, 'statusID' => 4]])),
-        ]);
-        $client = new HttpClient([
-            'handler' => HandlerStack::create($mock),
-            'base_uri' => Letter::API_ENDPOINT,
-        ]);
-        $letter = new Letter($client);
-        $letter->setAccessToken($this->createMockToken());
-
-        $statuses = $letter->getRegisteredLetterStatus('2024-01-01', '2024-01-31');
-        $this->assertCount(1, $statuses);
-        $this->assertSame(5, $statuses[0]->getLetterId());
-    }
-
-    public function testGetLetterStatusByCustom1WithMockClient(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, [], json_encode([['letterID' => 7, 'statusID' => 4, 'custom1' => 'RE-001']])),
-        ]);
-        $client = new HttpClient([
-            'handler' => HandlerStack::create($mock),
-            'base_uri' => Letter::API_ENDPOINT,
-        ]);
-        $letter = new Letter($client);
-        $letter->setAccessToken($this->createMockToken());
-
-        $statuses = $letter->getLetterStatusByCustom1('RE-001');
-        $this->assertCount(1, $statuses);
-        $this->assertSame(7, $statuses[0]->getLetterId());
-    }
-
-    public function testGetLetterStatusByBatchWithMockClient(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, [], json_encode([['letterID' => 8, 'statusID' => 4, 'batchID' => 100]])),
-        ]);
-        $client = new HttpClient([
-            'handler' => HandlerStack::create($mock),
-            'base_uri' => Letter::API_ENDPOINT,
-        ]);
-        $letter = new Letter($client);
-        $letter->setAccessToken($this->createMockToken());
-
-        $statuses = $letter->getLetterStatusByBatch(100);
-        $this->assertCount(1, $statuses);
-        $this->assertSame(8, $statuses[0]->getLetterId());
-    }
-
-    public function testCancelQueuedWithMockClient(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, [], json_encode([
-                ['letterID' => 100, 'successful' => true, 'message' => 'Abruch/Freigabe der Sendung war erfolgreich'],
-            ])),
-        ]);
-        $client = new HttpClient([
-            'handler' => HandlerStack::create($mock),
-            'base_uri' => Letter::API_ENDPOINT,
-        ]);
-        $letter = new Letter($client);
-        $letter->setAccessToken($this->createMockToken());
-
-        $results = $letter->cancelQueued([100]);
-        $this->assertCount(1, $results);
-        $this->assertInstanceOf(QueuedOperationResult::class, $results[0]);
-        $this->assertSame('Abruch/Freigabe der Sendung war erfolgreich', $results[0]->getMessage());
-    }
-
-    public function testReleaseQueuedWithMockClient(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, [], json_encode([
-                ['letterID' => 101, 'successful' => true, 'message' => 'Abruch/Freigabe der Sendung war erfolgreich'],
-            ])),
-        ]);
-        $client = new HttpClient([
-            'handler' => HandlerStack::create($mock),
-            'base_uri' => Letter::API_ENDPOINT,
-        ]);
-        $letter = new Letter($client);
-        $letter->setAccessToken($this->createMockToken());
-
-        $results = $letter->releaseQueued([101]);
-        $this->assertCount(1, $results);
-        $this->assertInstanceOf(QueuedOperationResult::class, $results[0]);
-    }
-
-    public function testGetPremiumAdressFeedbackWithMockClient(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, [], json_encode([['letterID' => 20, 'statusID' => 4]])),
-        ]);
-        $client = new HttpClient([
-            'handler' => HandlerStack::create($mock),
-            'base_uri' => Letter::API_ENDPOINT,
-        ]);
-        $letter = new Letter($client);
-        $letter->setAccessToken($this->createMockToken());
-
-        $feedback = $letter->getPremiumAdressFeedback('2024-01-01', '2024-01-31');
-        $this->assertCount(1, $feedback);
-        $this->assertSame(20, $feedback[0]->getLetterId());
-    }
-
-    public function testGetTestResultWithMockClient(): void
-    {
-        $mock = new MockHandler([
-            new Response(200, [], json_encode([
-                'letterID' => 123,
-                'fileName' => 'test.pdf',
-                'data' => 'base64content',
-            ])),
-        ]);
-        $client = new HttpClient([
-            'handler' => HandlerStack::create($mock),
-            'base_uri' => Letter::API_ENDPOINT,
-        ]);
-        $letter = new Letter($client);
-        $letter->setAccessToken($this->createMockToken());
-        $letter->setLetterId('123');
-
-        $result = $letter->getTestResult('123');
-        $this->assertInstanceOf(LetterDataResult::class, $result);
-        $this->assertSame(123, $result->getLetterId());
-        $this->assertSame('base64content', $result->getData());
-    }
-
-    private function createEnvelope(): Envelope
-    {
-        $envelope = new Envelope();
-        $recipient = new Recipient();
-        $recipient
-            ->setAddressLine('Test', 0)
-            ->setZipCode('53115')
-            ->setCity('Bonn');
-        $envelope->setRecipient($recipient);
-        return $envelope;
-    }
-
-    private function createMockToken(): AccessToken
-    {
-        return new AccessToken('vendor', '1234567890', 'secret', 'password');
-    }
-
-    private function createTempPdf(): string
-    {
-        $file = sys_get_temp_dir() . '/epost_test_' . uniqid('', true) . '.pdf';
-        file_put_contents($file, "%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF");
-        return $file;
+        self::assertInstanceOf(Client::class, $letter->created);
+        self::assertSame(Letter::API_ENDPOINT, $letter->config['base_uri']);
+        self::assertSame(['Authorization' => 'Bearer test-token'], $letter->config['headers']);
     }
 }

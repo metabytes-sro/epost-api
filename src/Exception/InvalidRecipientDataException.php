@@ -1,11 +1,12 @@
 <?php
 
-declare(strict_types = 1);
+declare(strict_types=1);
 
 namespace MetabytesSRO\EPost\Api\Exception;
 
 use LogicException;
 
-class InvalidRecipientDataException extends LogicException
-{
-}
+/**
+ * Thrown when recipient or return address data is incomplete or invalid.
+ */
+class InvalidRecipientDataException extends LogicException implements EPostException {}

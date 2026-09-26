@@ -9,9 +9,11 @@ use JsonSerializable;
 use MetabytesSRO\EPost\Api\Exception\InvalidRecipientDataException;
 
 /**
- * Return address for Einschreiben Rückschein (registered letter with return receipt).
- * Required when using DeliveryOptions::setRegisteredWithReturnReceipt() or
- * DeliveryOptions::setRegisteredAddresseeOnlyWithReturnReceipt().
+ * Return address for "Einschreiben Rückschein" (registered letter with return receipt).
+ *
+ * @deprecated since 1.1. The E-POST API marks these fields as obsolete: since October 2022 the
+ *             return address is taken from the sender line in the letter's address window and
+ *             explicit values are ignored (warning W220). Will be removed in 2.0.
  */
 class RegisteredLetterReturnAddress implements JsonSerializable
 {
@@ -30,6 +32,7 @@ class RegisteredLetterReturnAddress implements JsonSerializable
     {
         $this->validateLength('registeredLetterAdressLine1', $line);
         $this->fields['registeredLetterAdressLine1'] = $line;
+
         return $this;
     }
 
@@ -44,6 +47,7 @@ class RegisteredLetterReturnAddress implements JsonSerializable
             $this->validateLength('registeredLetterAdressLine2', $line);
         }
         $this->fields['registeredLetterAdressLine2'] = $line;
+
         return $this;
     }
 
@@ -58,6 +62,7 @@ class RegisteredLetterReturnAddress implements JsonSerializable
             $this->validateLength('registeredLetterAdressLine3', $line);
         }
         $this->fields['registeredLetterAdressLine3'] = $line;
+
         return $this;
     }
 
@@ -69,10 +74,11 @@ class RegisteredLetterReturnAddress implements JsonSerializable
     public function setZipCode(string $zipCode): self
     {
         $this->validateLength('registeredLetterZipCode', $zipCode);
-        if (strlen($zipCode) < 5) {
+        if (mb_strlen($zipCode) < 5) {
             throw new InvalidArgumentException('registeredLetterZipCode must be at least 5 characters');
         }
         $this->fields['registeredLetterZipCode'] = $zipCode;
+
         return $this;
     }
 
@@ -85,6 +91,7 @@ class RegisteredLetterReturnAddress implements JsonSerializable
     {
         $this->validateLength('registeredLetterCity', $city);
         $this->fields['registeredLetterCity'] = $city;
+
         return $this;
     }
 
@@ -94,6 +101,7 @@ class RegisteredLetterReturnAddress implements JsonSerializable
     }
 
     /**
+     * @throws InvalidRecipientDataException when address line 1, zip code or city is missing
      * @return array<string, string>
      */
     public function getData(): array
@@ -103,12 +111,16 @@ class RegisteredLetterReturnAddress implements JsonSerializable
             || empty($this->fields['registeredLetterCity'])
         ) {
             throw new InvalidRecipientDataException(
-                'RegisteredLetterReturnAddress requires addressLine1, zipCode and city'
+                'RegisteredLetterReturnAddress requires addressLine1, zipCode and city',
             );
         }
-        return array_filter($this->fields, fn ($v) => $v !== null && $v !== '');
+
+        return array_filter($this->fields, static fn($v) => $v !== null && $v !== '');
     }
 
+    /**
+     * @return array<string, string>
+     */
     public function jsonSerialize(): array
     {
         return $this->getData();
@@ -117,9 +129,9 @@ class RegisteredLetterReturnAddress implements JsonSerializable
     private function validateLength(string $key, string $value): void
     {
         $max = self::VALIDATION_LENGTHS[$key] ?? 80;
-        if (strlen($value) > $max) {
+        if (mb_strlen($value) > $max) {
             throw new InvalidArgumentException(
-                sprintf('Value of "%s" exceeds maximum length of %u', $key, $max)
+                sprintf('Value of "%s" exceeds maximum length of %u', $key, $max),
             );
         }
     }
