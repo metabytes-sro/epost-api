@@ -48,5 +48,18 @@ Then update the table above and check:
 | `POST /api/Letter/CancelQueued` | `Letter::cancelQueued()` |
 | `POST /api/Letter/ReleaseQueued` | `Letter::releaseQueued()` |
 
-Not covered: the `Campaign` (Dialogpost), `Client`, `Vendor` and `PlugIn`
-documentation endpoints.
+## Endpoints out of scope
+
+The following areas of the API are deliberately not covered and will not be
+added to this package:
+
+| Endpoints | Purpose |
+|-----------|---------|
+| `/api/Vendor/*` | Reporting for software vendors: letters per day, letters with errors, campaign details, contact information |
+| `/api/Campaign/*` | Dialogpost mass mailings (cost estimate, samples, open, confirm, finalise, cancel, status) |
+| `/api/Client/*` | Changing the customer's contact email address and mobile number |
+| `/api/PlugIn/*` | Plugin documentation pages |
+
+Pull requests adding them will not be merged. Users who need these endpoints
+can call them with their own Guzzle client using the definition in this
+directory.

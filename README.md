@@ -15,6 +15,22 @@ their delivery, manage queued letters and estimate postage.
 - Local price calculator based on the official Deutsche Post price lists
 - Tested against a mocked API on PHP 8.1 to 8.5, with 100% line coverage enforced in CI
 
+## Scope
+
+The package covers the letter and login parts of the E-POSTBUSINESS API:
+
+| API area | Covered |
+|----------|---------|
+| `/api/Letter` (sending, status queries, queued letters, PremiumAdress feedback, test results) | Yes, completely |
+| `/api/Login` (token, SMS code, password, health check) | Yes, completely |
+| `/api/Vendor` (reporting for software vendors) | No, and not planned |
+| `/api/Campaign` (Dialogpost mass mailings) | No, and not planned |
+| `/api/Client` (changing the customer's contact email and mobile number) | No, and not planned |
+
+The vendor, campaign and client endpoints are out of scope for this package and
+will not be added. If you need them, call them with your own Guzzle client; the
+API definition is in [`docs/api/`](docs/api/README.md).
+
 ## Installation
 
 ```bash
@@ -321,4 +337,7 @@ Get in touch via [metabytes.eu](https://metabytes.eu) or
 
 ## License
 
-LGPL-3.0-or-later. See [LICENSE](LICENSE).
+This package is licensed under the GNU Lesser General Public License,
+version 3 or later (`LGPL-3.0-or-later`). The LGPL text is in
+[LICENSE](LICENSE); it incorporates the GNU General Public License, whose
+text is in [COPYING](COPYING).
