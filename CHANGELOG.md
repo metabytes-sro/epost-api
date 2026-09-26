@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-26
+
 ### Added
 
 - `Login::healthCheck()` for `GET /api/Login/HealthCheck`
@@ -94,5 +96,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Class docblocks for Letter and Login: timeouts/connection errors are not caught by caller
 - README: pricing examples, environment variables, Einschreiben tracking
 
-[Unreleased]: https://github.com/metabytes-sro/epost-api/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/metabytes-sro/epost-api/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/metabytes-sro/epost-api/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/metabytes-sro/epost-api/compare/v0.11-beta...v1.0.0
