@@ -4,7 +4,8 @@
 
 | Version | PHP        | Supported          |
 |---------|------------|--------------------|
-| 1.x     | 8.1 – 8.5  | Yes                |
+| 2.x     | 8.3 – 8.5  | Yes                |
+| 1.x     | 8.1 – 8.5  | Bug and security fixes on the `1.x` branch |
 | 0.x     | 7.x        | No, please upgrade |
 
 ## Reporting a vulnerability

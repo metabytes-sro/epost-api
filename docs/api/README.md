@@ -19,34 +19,33 @@ curl -sS https://api.epost.docuguide.com/trackStatusCodes.json -o docs/api/track
 
 Then update the table above and check:
 
-- `TrackStatusCodes` against `trackStatusCodes.json` (the test suite compares
-  the two, so a stale table fails `composer test`).
-- The `Letter` and `LetterStatus` schemas against `Letter`, `DeliveryOptions`,
-  `Recipient` and `LetterStatus`.
-- The `registeredLetter` field description for the list of accepted
-  registered-mail options.
-- The `Error` schema description for the catalogue of error codes.
+- `TrackStatusCode` against `trackStatusCodes.json`, `RegisteredMailType`
+  against the `registeredLetter` field description and `ErrorCode` against the
+  `Error` schema description. The test suite compares all three, so a stale
+  enum fails `composer test`.
+- The `Letter` and `LetterStatus` schemas against `Letter`, `Recipient`,
+  `SenderAddress`, `TestOptions`, the `PlugIn` classes and `LetterStatus`.
 
 ## Endpoints covered by this package
 
-| Endpoint | Method on `Letter` / `Login` |
-|----------|------------------------------|
+| Endpoint | Method on `EPostClient` / `Login` |
+|----------|-----------------------------------|
 | `POST /api/Login` | `Login::login()` |
 | `POST /api/Login/smsRequest` | `Login::smsRequest()` |
 | `POST /api/Login/setPassword` | `Login::setPassword()` |
-| `GET /api/Login/HealthCheck` | `Login::healthCheck()` |
-| `POST /api/Letter` | `Letter::send()`, `Letter::sendBatch()` |
-| `GET /api/Letter/{letterID}` | `Letter::getLetterStatus()` |
-| `POST /api/Letter/StatusQuery` | `Letter::getMultipleLetterStatuses()` |
-| `GET /api/Letter/Date` | `Letter::getLetterStatusByDateRange()` |
-| `GET /api/Letter/Open` | `Letter::getOpenLetters()` |
-| `GET /api/Letter/Registered` | `Letter::getRegisteredLetterStatus()` |
-| `GET /api/Letter/Custom1` | `Letter::getLetterStatusByCustom1()` |
-| `GET /api/Letter/Batch` | `Letter::getLetterStatusByBatch()` |
-| `GET /api/Letter/PremiumAdressFeedback` | `Letter::getPremiumAdressFeedback()` |
-| `GET /api/Letter/TestResult` | `Letter::getTestResult()` |
-| `POST /api/Letter/CancelQueued` | `Letter::cancelQueued()` |
-| `POST /api/Letter/ReleaseQueued` | `Letter::releaseQueued()` |
+| `GET /api/Login/HealthCheck` | `Login::healthCheck()`, `EPostClient::healthCheck()` |
+| `POST /api/Letter` | `EPostClient::sendLetter()`, `sendLetters()` |
+| `GET /api/Letter/{letterID}` | `EPostClient::getLetterStatus()` |
+| `POST /api/Letter/StatusQuery` | `EPostClient::getLetterStatuses()` |
+| `GET /api/Letter/Date` | `EPostClient::getLetterStatusByDateRange()` |
+| `GET /api/Letter/Open` | `EPostClient::getOpenLetters()` |
+| `GET /api/Letter/Registered` | `EPostClient::getRegisteredLetterStatus()` |
+| `GET /api/Letter/Custom1` | `EPostClient::getLetterStatusByCustom1()` |
+| `GET /api/Letter/Batch` | `EPostClient::getLetterStatusByBatch()` |
+| `GET /api/Letter/PremiumAdressFeedback` | `EPostClient::getPremiumAdressFeedback()` |
+| `GET /api/Letter/TestResult` | `EPostClient::getTestResult()` |
+| `POST /api/Letter/CancelQueued` | `EPostClient::cancelQueued()` |
+| `POST /api/Letter/ReleaseQueued` | `EPostClient::releaseQueued()` |
 
 ## Endpoints out of scope
 

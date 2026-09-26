@@ -4,78 +4,67 @@ declare(strict_types=1);
 
 namespace MetabytesSRO\EPost\Api;
 
+use DateTimeImmutable;
+
 /**
- * Error object returned by the E-POST API, both as an error response body and as
- * an item of LetterStatus::getErrors().
- *
- * The level is one of "Info", "Warning" or "Error"; the code is a short
- * identifier such as "E101" (expired token) or "W201" (address area exceeded).
- * The full catalogue is documented in the Error schema of the API definition,
- * see docs/api in the repository.
+ * Error object of the E-POST API: the body of an error response, an item of
+ * LetterStatus::$errors, and the result of the health check.
  *
  * @see https://api.epost.docuguide.com/swagger/v2/swagger.json Error schema
  */
-class Error
+final readonly class Error
 {
-    public const LEVEL_INFO = 'Info';
-    public const LEVEL_WARNING = 'Warning';
-    public const LEVEL_ERROR = 'Error';
-
-    final public function __construct(
-        private readonly string $level,
-        private readonly string $code,
-        private readonly string $description,
-        private readonly ?string $date = null,
+    /**
+     * @param string $level "Info", "Warning" or "Error"
+     * @param string $code Short identifier such as "E101"; see ErrorCode for the catalogue
+     * @param string $description Message text, usually German
+     * @param DateTimeImmutable|null $date Time of the message when the API reports one
+     */
+    public function __construct(
+        public string $level,
+        public string $code,
+        public string $description,
+        public ?DateTimeImmutable $date = null,
     ) {}
 
     /**
      * @param array<string, mixed> $data
      */
-    public static function fromArray(array $data): static
+    public static function fromArray(array $data): self
     {
-        return new static(
+        return new self(
             Json::string($data['level'] ?? null) ?? '',
             Json::string($data['code'] ?? null) ?? '',
             Json::string($data['description'] ?? null) ?? '',
-            Json::string($data['date'] ?? null),
+            Json::date($data['date'] ?? null),
         );
     }
 
-    public function getLevel(): string
+    public function errorLevel(): ?ErrorLevel
     {
-        return $this->level;
-    }
-
-    public function getCode(): string
-    {
-        return $this->code;
-    }
-
-    public function getDescription(): string
-    {
-        return $this->description;
+        return ErrorLevel::fromLabel($this->level);
     }
 
     /**
-     * Timestamp of the message as reported by the API, when present.
+     * The code as enum, or null for a code this package does not know.
      */
-    public function getDate(): ?string
+    public function errorCode(): ?ErrorCode
     {
-        return $this->date;
+        return ErrorCode::tryFrom($this->code);
     }
 
     public function isError(): bool
     {
-        return strcasecmp($this->level, self::LEVEL_ERROR) === 0;
+        return $this->errorLevel() === ErrorLevel::Error;
     }
 
     public function isWarning(): bool
     {
-        return strcasecmp($this->level, self::LEVEL_WARNING) === 0;
+        return $this->errorLevel() === ErrorLevel::Warning;
     }
 
     public function isInfo(): bool
     {
-        return strcasecmp($this->level, self::LEVEL_INFO) === 0;
+        return $this->errorLevel() === ErrorLevel::Info;
     }
 }

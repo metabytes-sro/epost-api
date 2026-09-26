@@ -9,7 +9,9 @@ use Throwable;
 /**
  * Marker interface implemented by every exception this package throws.
  *
- * Catch it to handle any failure raised by the client, whether it comes from
- * the E-POST API (ErrorException) or from local validation.
+ * Catch it to handle any failure in one place, whether the E-POST API rejected
+ * a request (ApiException), the request never reached the API
+ * (TransportException) or the input was invalid before sending
+ * (ValidationException).
  */
 interface EPostException extends Throwable {}

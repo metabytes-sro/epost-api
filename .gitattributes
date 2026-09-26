@@ -7,6 +7,9 @@
 /.php-cs-fixer.dist.php export-ignore
 /CONTRIBUTING.md        export-ignore
 /COPYING                export-ignore
+/RELEASING.md           export-ignore
+/.env.example           export-ignore
+/examples/              export-ignore
 /SECURITY.md            export-ignore
 /docs/                  export-ignore
 /phpstan.neon.dist      export-ignore

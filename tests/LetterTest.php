@@ -4,306 +4,215 @@ declare(strict_types=1);
 
 namespace MetabytesSRO\EPost\Api\Tests;
 
-use GuzzleHttp\Client;
-use GuzzleHttp\ClientInterface;
-use InvalidArgumentException;
-use MetabytesSRO\EPost\Api\Exception\InvalidFileFormat;
-use MetabytesSRO\EPost\Api\Exception\InvalidFileFormatException;
-use MetabytesSRO\EPost\Api\Exception\MissingAttachmentException;
-use MetabytesSRO\EPost\Api\Exception\MissingAuthorizationTokenException;
-use MetabytesSRO\EPost\Api\Exception\MissingEnvelopeException;
-use MetabytesSRO\EPost\Api\Exception\MissingPreconditionException;
-use MetabytesSRO\EPost\Api\Exception\MissingRecipientException;
+use MetabytesSRO\EPost\Api\Attachment;
+use MetabytesSRO\EPost\Api\Exception\ValidationException;
 use MetabytesSRO\EPost\Api\Letter;
-use MetabytesSRO\EPost\Api\Metadata\DeliveryOptions;
-use MetabytesSRO\EPost\Api\Metadata\Envelope;
-use RuntimeException;
-use stdClass;
+use MetabytesSRO\EPost\Api\PlugIn\Automover;
+use MetabytesSRO\EPost\Api\PlugIn\PremiumAdress;
+use MetabytesSRO\EPost\Api\PlugIn\PremiumAdressVariant;
+use MetabytesSRO\EPost\Api\PlugIn\UploadManagement;
+use MetabytesSRO\EPost\Api\Recipient;
+use MetabytesSRO\EPost\Api\RegisteredMailType;
+use MetabytesSRO\EPost\Api\SenderAddress;
+use MetabytesSRO\EPost\Api\TestOptions;
+use PHPUnit\Framework\Attributes\DataProvider;
 
-/**
- * Building a letter and its payload, without any HTTP.
- */
 class LetterTest extends ApiTestCase
 {
-    public function testBuildLetterPayloadRequiresEnvelope(): void
+    public function testMinimalPayload(): void
     {
-        $letter = (new Letter())->setAttachment($this->createTempPdf());
+        $payload = self::letter()->toPayload();
 
-        $this->expectException(MissingEnvelopeException::class);
-        $letter->buildLetterPayload();
+        self::assertSame([
+            'addressLine1' => 'Max Mustermann',
+            'addressLine2' => 'Musterstraße 1',
+            'zipCode' => '53115',
+            'city' => 'Bonn',
+            'fileName' => 'letter.pdf',
+            'data' => chunk_split(base64_encode(self::PDF)),
+            'isColor' => false,
+            'isDuplex' => false,
+            'coverLetter' => false,
+        ], $payload);
     }
 
-    public function testBuildLetterPayloadRequiresRecipient(): void
+    public function testFullPayload(): void
     {
+        $cover = Attachment::fromString('%PDF-1.4 cover', 'cover.pdf');
+        $sender = SenderAddress::fromCompleteLine('Fa. Huber GmbH, Am Weg 1, 76887 Bad Bergzabern');
+        $test = new TestOptions('test@example.com', true);
         $letter = (new Letter())
-            ->setEnvelope(new Envelope())
-            ->setAttachment($this->createTempPdf());
+            ->recipient(self::recipient())
+            ->document(self::document())
+            ->coverSheet($cover)
+            ->color()
+            ->duplex()
+            ->batchId(4711)
+            ->custom(1, 'RE-1')
+            ->custom(5, 'five')
+            ->costCenter('KST01')
+            ->vendorSystemInformation('my-erp 1.2')
+            ->sender($sender)
+            ->test($test)
+            ->plugIn(UploadManagement::dueInDays(2))
+            ->plugIn(new PremiumAdress(PremiumAdressVariant::Report))
+            ->duplicateFailsafe();
 
-        $this->expectException(MissingRecipientException::class);
-        $letter->buildLetterPayload();
-    }
+        $payload = $letter->toPayload();
 
-    public function testBuildLetterPayloadRequiresAttachment(): void
-    {
-        $letter = (new Letter())->setEnvelope($this->createEnvelope());
-
-        $this->expectException(MissingAttachmentException::class);
-        $letter->buildLetterPayload();
-    }
-
-    public function testBuildLetterPayloadDoesNotRequireAccessToken(): void
-    {
-        $letter = (new Letter())
-            ->setEnvelope($this->createEnvelope())
-            ->setAttachment($this->createTempPdf());
-
-        $payload = $letter->buildLetterPayload();
-
-        self::assertArrayHasKey('data', $payload);
-    }
-
-    public function testBuildLetterPayloadContainsRecipientAndEncodedAttachment(): void
-    {
-        $pdf = $this->createTempPdf('%PDF-1.4 test');
-        $letter = (new Letter())
-            ->setEnvelope($this->createEnvelope())
-            ->setAttachment($pdf);
-
-        $payload = $letter->buildLetterPayload();
-
-        self::assertSame('Test', $payload['addressLine1']);
-        self::assertSame('53115', $payload['zipCode']);
-        self::assertSame('Bonn', $payload['city']);
-        self::assertSame(basename($pdf), $payload['fileName']);
-        self::assertSame(chunk_split(base64_encode('%PDF-1.4 test')), $payload['data']);
-        self::assertFalse($payload['coverLetter']);
-        self::assertArrayNotHasKey('coverData', $payload);
-        self::assertArrayNotHasKey('testFlag', $payload);
-    }
-
-    public function testBuildLetterPayloadIncludesCoverLetter(): void
-    {
-        $cover = $this->createTempPdf('%PDF-1.4 cover');
-        $letter = (new Letter())
-            ->setEnvelope($this->createEnvelope())
-            ->setAttachment($this->createTempPdf())
-            ->setCoverLetter($cover);
-
-        $payload = $letter->buildLetterPayload();
-
-        self::assertSame($cover, $letter->getCoverLetter());
-        self::assertTrue($payload['coverLetter']);
-        self::assertSame(chunk_split(base64_encode('%PDF-1.4 cover')), $payload['coverData']);
-    }
-
-    public function testCoverLetterCanBeUnset(): void
-    {
-        $letter = (new Letter())
-            ->setCoverLetter($this->createTempPdf())
-            ->setCoverLetter(null);
-
-        self::assertNull($letter->getCoverLetter());
-    }
-
-    public function testBuildLetterPayloadMergesDeliveryOptions(): void
-    {
-        $options = (new DeliveryOptions())->setColorColored()->setDuplex(true)->setRegisteredStandard();
-        $letter = (new Letter())
-            ->setEnvelope($this->createEnvelope())
-            ->setAttachment($this->createTempPdf())
-            ->setDeliveryOptions($options);
-
-        $payload = $letter->buildLetterPayload();
-
-        self::assertSame($options, $letter->getDeliveryOptions());
+        self::assertSame(self::recipient()->toArray(), array_intersect_key($payload, self::recipient()->toArray()));
+        self::assertSame('letter.pdf', $payload['fileName']);
         self::assertTrue($payload['isColor']);
         self::assertTrue($payload['isDuplex']);
-        self::assertSame('Einschreiben', $payload['registeredLetter']);
-    }
-
-    public function testBuildLetterPayloadSetsTestFlagForTestEmail(): void
-    {
-        $letter = (new Letter())
-            ->setEnvelope($this->createEnvelope())
-            ->setAttachment($this->createTempPdf())
-            ->setTestEmail('test@example.com');
-
-        $payload = $letter->buildLetterPayload();
-
-        self::assertSame('test@example.com', $letter->getTestEmail());
+        self::assertTrue($payload['coverLetter']);
+        self::assertSame(chunk_split(base64_encode('%PDF-1.4 cover')), $payload['coverData']);
+        self::assertArrayNotHasKey('registeredLetter', $payload);
+        self::assertSame(4711, $payload['batchID']);
+        self::assertSame('RE-1', $payload['custom1']);
+        self::assertSame('five', $payload['custom5']);
+        self::assertArrayNotHasKey('custom2', $payload);
+        self::assertSame('KST01', $payload['costCenter']);
+        self::assertSame('my-erp 1.2', $payload['vendorSystemInformation']);
+        self::assertSame('Fa. Huber GmbH, Am Weg 1, 76887 Bad Bergzabern', $payload['senderAdressLineComplete']);
         self::assertTrue($payload['testFlag']);
         self::assertSame('test@example.com', $payload['testEMail']);
+        self::assertTrue($payload['testShowRestrictedArea']);
+        self::assertSame([
+            ['plugInName' => 'UploadManagement', 'plugInModel' => ['useMinimumQuantity' => false, 'dueDays' => 2]],
+            ['plugInName' => 'PremiumAdress', 'plugInModel' => ['productVariants' => 'Report']],
+        ], $payload['plugInList']);
+        self::assertTrue($payload['activateDuplicateFailsafe']);
+
+        self::assertSame($cover, $letter->getCoverSheet());
+        self::assertTrue($letter->hasCoverSheet());
+        self::assertTrue($letter->isColor());
+        self::assertTrue($letter->isDuplex());
+        self::assertNull($letter->getRegisteredMail());
+        self::assertSame(4711, $letter->getBatchId());
+        self::assertSame('RE-1', $letter->getCustom(1));
+        self::assertNull($letter->getCustom(2));
+        self::assertSame('KST01', $letter->getCostCenter());
+        self::assertSame('my-erp 1.2', $letter->getVendorSystemInformation());
+        self::assertSame($sender, $letter->getSender());
+        self::assertSame($test, $letter->getTest());
+        self::assertCount(2, $letter->getPlugIns());
+        self::assertTrue($letter->hasDuplicateFailsafe());
     }
 
-    public function testEmptyTestEmailDoesNotSetTestFlag(): void
+    public function testRegisteredMail(): void
     {
-        $letter = (new Letter())
-            ->setEnvelope($this->createEnvelope())
-            ->setAttachment($this->createTempPdf())
-            ->setTestEmail('');
+        $payload = self::letter()->registeredMail(RegisteredMailType::ReturnReceipt)->toPayload();
 
-        self::assertArrayNotHasKey('testFlag', $letter->buildLetterPayload());
+        self::assertSame('Einschreiben Rückschein', $payload['registeredLetter']);
     }
 
-    public function testSetAttachmentRejectsMissingFile(): void
+    public function testGeneratedCoverSheet(): void
     {
-        $this->expectException(InvalidFileFormatException::class);
-        $this->expectExceptionMessage('does not exist');
-        (new Letter())->setAttachment('/nonexistent/file.pdf');
+        $letter = self::letter()->generateCoverSheet();
+
+        self::assertTrue($letter->toPayload()['coverLetter']);
+        self::assertArrayNotHasKey('coverData', $letter->toPayload());
+        self::assertNull($letter->getCoverSheet());
     }
 
-    public function testSetAttachmentRejectsNonPdf(): void
+    public function testCoverSheetCanBeRemoved(): void
     {
-        $file = $this->createTempFile('.txt', 'just text');
+        $letter = self::letter()->coverSheet(Attachment::fromString('%PDF-1.4 c', 'c.pdf'))->generateCoverSheet(false);
 
-        $this->expectException(InvalidFileFormatException::class);
-        $this->expectExceptionMessage('Allowed: pdf');
-        (new Letter())->setAttachment($file);
+        self::assertFalse($letter->hasCoverSheet());
+        self::assertNull($letter->getCoverSheet());
+        self::assertFalse($letter->toPayload()['coverLetter']);
+
+        $letter->coverSheet(Attachment::fromString('%PDF-1.4 c', 'c.pdf'))->coverSheet(null);
+        self::assertFalse($letter->hasCoverSheet());
     }
 
-    public function testInvalidFileFormatExceptionIsCatchableUnderDeprecatedName(): void
+    public function testCustomFieldCanBeCleared(): void
     {
-        try {
-            (new Letter())->setAttachment('/nonexistent/file.pdf');
-            self::fail('Expected exception');
-        } catch (InvalidFileFormat $e) {
-            self::assertInstanceOf(InvalidFileFormatException::class, $e);
-        }
+        $letter = self::letter()->custom(3, 'x')->custom(3, null)->custom(2, 'y')->custom(2, '');
+
+        self::assertNull($letter->getCustom(3));
+        self::assertNull($letter->getCustom(2));
+        self::assertArrayNotHasKey('custom3', $letter->toPayload());
     }
 
-    public function testSetCoverLetterRejectsNonPdf(): void
+    public function testPlugInOfSameNameReplacesEarlierOne(): void
     {
-        $file = $this->createTempFile('.txt', 'just text');
+        $letter = self::letter()->plugIn(UploadManagement::dueInDays(1))->plugIn(UploadManagement::dueInDays(9));
 
-        $this->expectException(InvalidFileFormatException::class);
-        $this->expectExceptionMessage('cover letter');
-        (new Letter())->setCoverLetter($file);
+        self::assertCount(1, $letter->getPlugIns());
+        self::assertSame(['useMinimumQuantity' => false, 'dueDays' => 9], $letter->getPlugIns()[0]->model());
     }
 
-    public function testAttachmentDeletedAfterSetIsReportedWhenBuildingPayload(): void
+    public function testEmptyOptionalStringsAreOmitted(): void
     {
-        $pdf = $this->createTempPdf();
-        $letter = (new Letter())->setEnvelope($this->createEnvelope())->setAttachment($pdf);
-        unlink($pdf);
+        $payload = self::letter()->costCenter('')->vendorSystemInformation('')->toPayload();
 
-        $this->expectException(InvalidFileFormatException::class);
-        $this->expectExceptionMessage('could not be read');
-        @$letter->buildLetterPayload();
+        self::assertArrayNotHasKey('costCenter', $payload);
+        self::assertArrayNotHasKey('vendorSystemInformation', $payload);
     }
 
-    public function testGetAttachmentRequiresAttachment(): void
-    {
-        $this->expectException(MissingAttachmentException::class);
-        (new Letter())->getAttachment();
-    }
-
-    public function testGetAttachmentReturnsPath(): void
-    {
-        $pdf = $this->createTempPdf();
-
-        self::assertSame($pdf, (new Letter())->setAttachment($pdf)->getAttachment());
-    }
-
-    public function testGetEnvelopeReturnsEnvelope(): void
-    {
-        $envelope = $this->createEnvelope();
-
-        self::assertSame($envelope, (new Letter())->setEnvelope($envelope)->getEnvelope());
-    }
-
-    public function testGetAccessTokenRequiresToken(): void
-    {
-        $this->expectException(MissingAuthorizationTokenException::class);
-        (new Letter())->getAccessToken();
-    }
-
-    public function testGetAccessTokenReturnsToken(): void
-    {
-        $token = $this->createToken();
-
-        self::assertSame($token, (new Letter())->setAccessToken($token)->getAccessToken());
-    }
-
-    public function testGetLetterIdRequiresLetterId(): void
-    {
-        $this->expectException(MissingPreconditionException::class);
-        (new Letter())->getLetterId();
-    }
-
-    public function testGetLetterIdRejectsEmptyString(): void
-    {
-        $this->expectException(MissingPreconditionException::class);
-        (new Letter())->setLetterId('')->getLetterId();
-    }
-
-    public function testLetterIdCanBeSet(): void
-    {
-        self::assertSame('42', (new Letter())->setLetterId('42')->getLetterId());
-    }
-
-    public function testTestEnvironmentFlag(): void
+    public function testGetters(): void
     {
         $letter = new Letter();
 
-        self::assertFalse($letter->isTestEnvironment());
-        self::assertTrue($letter->setTestEnvironment(true)->isTestEnvironment());
+        self::assertNull($letter->getRecipient());
+        self::assertNull($letter->getDocument());
+        self::assertFalse($letter->hasDuplicateFailsafe());
+        self::assertSame([], $letter->getPlugIns());
+        self::assertNull($letter->getSender());
+        self::assertNull($letter->getTest());
+        self::assertSame(self::recipient()->toArray(), $letter->recipient(self::recipient())->getRecipient()?->toArray());
+        self::assertSame('letter.pdf', $letter->document(self::document())->getDocument()?->fileName);
     }
 
-    public function testSendBatchRequiresLetterInstances(): void
+    /**
+     * @return iterable<string, array{callable(): mixed, string}>
+     */
+    public static function invalid(): iterable
     {
-        $letter = (new Letter())->setAccessToken($this->createToken());
-
-        $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage('Letter instances');
-        // Deliberately wrong input: the runtime check guards callers without static analysis.
-        // @phpstan-ignore argument.type
-        $letter->sendBatch([new stdClass()]);
+        yield 'no recipient' => [static fn() => (new Letter(null, self::document()))->toPayload(), 'A recipient is required'];
+        yield 'no document' => [static fn() => (new Letter(self::recipient()))->toPayload(), 'A PDF document is required'];
+        yield 'document too large' => [
+            static fn() => (new Letter(self::recipient(), self::document('big.pdf', '%PDF-' . str_repeat('x', Attachment::MAX_LETTER_BYTES))))->toPayload(),
+            'the API accepts at most 20971520 bytes',
+        ];
+        yield 'cover sheet too large' => [
+            static fn() => self::letter()->coverSheet(self::document('cover.pdf', '%PDF-' . str_repeat('x', Attachment::MAX_COVER_SHEET_BYTES)))->toPayload(),
+            'cover sheet "cover.pdf"',
+        ];
+        yield 'registered duplex' => [
+            static fn() => self::letter()->registeredMail(RegisteredMailType::Standard)->duplex()->toPayload(),
+            'E312',
+        ];
+        yield 'registered international' => [
+            static fn() => (new Letter(new Recipient('Mario', '00100', 'Roma', country: 'ITALIEN'), self::document()))->registeredMail(RegisteredMailType::Standard)->toPayload(),
+            'E311',
+        ];
+        yield 'registered premiumadress' => [
+            static fn() => self::letter()->registeredMail(RegisteredMailType::Submission)->plugIn(new PremiumAdress())->toPayload(),
+            'PremiumAdress is not available for registered mail',
+        ];
+        yield 'registered automover' => [
+            static fn() => self::letter()->registeredMail(RegisteredMailType::Submission)->plugIn(new Automover())->toPayload(),
+            'Automover cannot reposition',
+        ];
+        yield 'custom number too low' => [static fn() => self::letter()->custom(0, 'x'), 'between 1 and 5'];
+        yield 'custom number too high' => [static fn() => self::letter()->custom(6, 'x'), 'between 1 and 5'];
+        yield 'custom too long' => [static fn() => self::letter()->custom(1, str_repeat('a', 81)), 'custom1 exceeds the maximum length of 80'];
+        yield 'cost center too long' => [static fn() => self::letter()->costCenter('123456789'), 'costCenter exceeds the maximum length of 8'];
+        yield 'cost center invalid chars' => [static fn() => self::letter()->costCenter('KST-1'), 'letters and digits'];
+        yield 'vendor information too long' => [static fn() => self::letter()->vendorSystemInformation(str_repeat('a', 121)), 'vendorSystemInformation exceeds'];
     }
 
-    public function testSendBatchReturnsEmptyForEmptyArray(): void
+    /**
+     * @param callable(): mixed $action
+     */
+    #[DataProvider('invalid')]
+    public function testValidation(callable $action, string $message): void
     {
-        self::assertSame([], (new Letter())->sendBatch([]));
-    }
-
-    public function testSendWithoutAccessTokenFailsBeforeAnyRequest(): void
-    {
-        $letter = (new Letter())
-            ->setEnvelope($this->createEnvelope())
-            ->setAttachment($this->createTempPdf());
-
-        $this->expectException(MissingAuthorizationTokenException::class);
-        $letter->send();
-    }
-
-    public function testDefaultHttpClientCarriesBaseUriAndBearerToken(): void
-    {
-        $letter = new class extends Letter {
-            /** @var array<string, mixed> */
-            public array $config = [];
-            public ?ClientInterface $created = null;
-
-            /**
-             * @param array<string, mixed> $config
-             */
-            protected function createHttpClient(array $config): ClientInterface
-            {
-                $this->config = $config;
-                $this->created = parent::createHttpClient($config);
-
-                // Never let the test reach the network.
-                throw new RuntimeException('stop');
-            }
-        };
-        $letter->setAccessToken($this->createToken())->setLetterId('1');
-
-        try {
-            $letter->getLetterStatus();
-        } catch (RuntimeException $e) {
-            self::assertSame('stop', $e->getMessage());
-        }
-
-        self::assertInstanceOf(Client::class, $letter->created);
-        self::assertSame(Letter::API_ENDPOINT, $letter->config['base_uri']);
-        self::assertSame(['Authorization' => 'Bearer test-token'], $letter->config['headers']);
+        $this->expectException(ValidationException::class);
+        $this->expectExceptionMessage($message);
+        $action();
     }
 }

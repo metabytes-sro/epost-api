@@ -8,12 +8,14 @@ use GuzzleHttp\Client;
 use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Psr7\Response;
-use MetabytesSRO\EPost\Api\AccessToken;
+use MetabytesSRO\EPost\Api\Attachment;
+use MetabytesSRO\EPost\Api\EPostClient;
+use MetabytesSRO\EPost\Api\Http\Transport;
 use MetabytesSRO\EPost\Api\Letter;
-use MetabytesSRO\EPost\Api\Metadata\Envelope;
-use MetabytesSRO\EPost\Api\Metadata\Envelope\Recipient;
+use MetabytesSRO\EPost\Api\Recipient;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\RequestInterface;
+use Throwable;
 
 /**
  * Base class for tests that talk to a mocked E-POST API.
@@ -23,6 +25,8 @@ use Psr\Http\Message\RequestInterface;
  */
 abstract class ApiTestCase extends TestCase
 {
+    public const string PDF = "%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF";
+
     /** @var list<RequestInterface> */
     protected array $requests = [];
 
@@ -41,9 +45,9 @@ abstract class ApiTestCase extends TestCase
     }
 
     /**
-     * A Guzzle client answering with the given responses in order.
+     * A Guzzle client answering with the given responses (or throwing the given exceptions) in order.
      */
-    protected function mockClient(Response ...$responses): Client
+    protected function mockClient(Response|Throwable ...$responses): Client
     {
         $this->requests = [];
         $stack = HandlerStack::create(new MockHandler(array_values($responses)));
@@ -55,12 +59,25 @@ abstract class ApiTestCase extends TestCase
             };
         });
 
-        return new Client(['handler' => $stack, 'base_uri' => Letter::API_ENDPOINT]);
+        return new Client(['handler' => $stack]);
     }
 
     /**
-     * A JSON response.
+     * A Transport bound to a mocked client.
      */
+    protected function transport(Response|Throwable ...$responses): Transport
+    {
+        return new Transport($this->mockClient(...$responses));
+    }
+
+    /**
+     * A client with a static token, bound to a mocked transport.
+     */
+    protected function client(Response|Throwable ...$responses): EPostClient
+    {
+        return EPostClient::withToken('test-token', $this->transport(...$responses));
+    }
+
     protected static function jsonResponse(mixed $data, int $status = 200): Response
     {
         return new Response(
@@ -95,7 +112,10 @@ abstract class ApiTestCase extends TestCase
     {
         $request = $this->lastRequest();
         self::assertSame($method, $request->getMethod());
+        self::assertSame('https', $request->getUri()->getScheme());
+        self::assertSame('api.epost.docuguide.com', $request->getUri()->getHost());
         self::assertSame($path, $request->getUri()->getPath());
+        self::assertSame('application/json', $request->getHeaderLine('Accept'));
 
         if ($query !== null) {
             parse_str($request->getUri()->getQuery(), $actualQuery);
@@ -103,7 +123,7 @@ abstract class ApiTestCase extends TestCase
         }
 
         if ($json !== null) {
-            self::assertStringStartsWith('application/json', $request->getHeaderLine('Content-Type'));
+            self::assertSame('application/json', $request->getHeaderLine('Content-Type'));
             self::assertSame($json, $this->lastRequestJson());
         }
     }
@@ -121,29 +141,24 @@ abstract class ApiTestCase extends TestCase
         return $decoded;
     }
 
-    protected function createEnvelope(): Envelope
+    protected static function recipient(): Recipient
     {
-        $recipient = (new Recipient())
-            ->setAddressLine('Test', 0)
-            ->setZipCode('53115')
-            ->setCity('Bonn');
-
-        return (new Envelope())->setRecipient($recipient);
+        return new Recipient('Max Mustermann', '53115', 'Bonn', 'Musterstraße 1');
     }
 
-    protected function createToken(): AccessToken
+    protected static function document(string $fileName = 'letter.pdf', string $contents = self::PDF): Attachment
     {
-        return AccessToken::fromToken('test-token');
+        return Attachment::fromString($contents, $fileName);
+    }
+
+    protected static function letter(): Letter
+    {
+        return new Letter(self::recipient(), self::document());
     }
 
     /**
-     * A minimal but valid PDF file in the temp directory, removed after the test.
+     * A file in the temp directory, removed after the test.
      */
-    protected function createTempPdf(string $content = "%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF"): string
-    {
-        return $this->createTempFile('.pdf', $content);
-    }
-
     protected function createTempFile(string $suffix, string $content): string
     {
         $file = sys_get_temp_dir() . '/epost_test_' . uniqid('', true) . $suffix;

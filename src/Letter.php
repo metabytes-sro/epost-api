@@ -4,550 +4,378 @@ declare(strict_types=1);
 
 namespace MetabytesSRO\EPost\Api;
 
-use GuzzleHttp\Client as HttpClient;
-use GuzzleHttp\ClientInterface;
-use GuzzleHttp\Exception\ClientException;
-use InvalidArgumentException;
-use MetabytesSRO\EPost\Api\Exception\ErrorException;
-use MetabytesSRO\EPost\Api\Exception\InvalidFileFormatException;
-use MetabytesSRO\EPost\Api\Exception\MissingAttachmentException;
-use MetabytesSRO\EPost\Api\Exception\MissingAuthorizationTokenException;
-use MetabytesSRO\EPost\Api\Exception\MissingEnvelopeException;
-use MetabytesSRO\EPost\Api\Exception\MissingPreconditionException;
-use MetabytesSRO\EPost\Api\Exception\MissingRecipientException;
-use MetabytesSRO\EPost\Api\Metadata\DeliveryOptions;
-use MetabytesSRO\EPost\Api\Metadata\Envelope;
+use MetabytesSRO\EPost\Api\Exception\ValidationException;
+use MetabytesSRO\EPost\Api\PlugIn\Automover;
+use MetabytesSRO\EPost\Api\PlugIn\PlugInInterface;
+use MetabytesSRO\EPost\Api\PlugIn\PremiumAdress;
 
 /**
- * A letter to send through the E-POSTBUSINESS API, and the client for the
- * /api/Letter endpoints (sending, status queries, queue management).
+ * A letter to submit through EPostClient::sendLetter().
  *
- * API errors (HTTP 4xx) are converted to ErrorException. Timeouts and connection
- * failures (GuzzleHttp\Exception\ConnectException) are not caught; callers should
- * handle these themselves.
+ * The recipient and the PDF document are mandatory; everything else is
+ * optional. toPayload() validates the combination of options against the
+ * rules of the API before anything is sent.
  *
- * Status queries are rate limited by the API: calls must be at least 5 seconds
- * apart, otherwise the API answers with HTTP 429 (ErrorException::isRateLimited()).
+ * @see https://api.epost.docuguide.com/swagger/v2/swagger.json Letter schema
  */
-class Letter
+final class Letter
 {
-    public const API_ENDPOINT = 'https://api.epost.docuguide.com';
+    public const int MAX_CUSTOM_LENGTH = 80;
+    public const int MAX_VENDOR_SYSTEM_INFORMATION_LENGTH = 120;
+    public const int MAX_COST_CENTER_LENGTH = 8;
 
-    private bool $testEnvironment = false;
-    private ?string $testEmail = null;
-    private ?AccessToken $accessToken = null;
-    private ?Envelope $envelope = null;
-    private ?string $coverLetterPath = null;
-    private ?string $attachmentPath = null;
-    private ?DeliveryOptions $deliveryOptions = null;
-    private ?string $letterId = null;
+    private ?Recipient $recipient;
+    private ?Attachment $document;
+    private ?Attachment $coverSheet = null;
+    private bool $generateCoverSheet = false;
+    private bool $color = false;
+    private bool $duplex = false;
+    private ?RegisteredMailType $registeredMail = null;
+    private ?int $batchId = null;
 
-    /**
-     * @param ClientInterface|null $httpClient Pre-configured Guzzle client. When given, it is used as is:
-     *                                         it must carry the base URI and the Authorization header.
-     */
-    public function __construct(
-        private readonly ?ClientInterface $httpClient = null,
-    ) {}
+    /** @var array<int, string> */
+    private array $custom = [];
+    private ?string $costCenter = null;
+    private ?string $vendorSystemInformation = null;
+    private ?SenderAddress $sender = null;
+    private ?TestOptions $test = null;
 
-    public function setAccessToken(AccessToken $accessToken): self
+    /** @var list<PlugInInterface> */
+    private array $plugIns = [];
+    private bool $duplicateFailsafe = false;
+
+    public function __construct(?Recipient $recipient = null, ?Attachment $document = null)
     {
-        $this->accessToken = $accessToken;
+        $this->recipient = $recipient;
+        $this->document = $document;
+    }
+
+    public function recipient(Recipient $recipient): self
+    {
+        $this->recipient = $recipient;
 
         return $this;
     }
 
-    /**
-     * @throws MissingAuthorizationTokenException
-     */
-    public function getAccessToken(): AccessToken
+    public function getRecipient(): ?Recipient
     {
-        if ($this->accessToken === null) {
-            throw new MissingAuthorizationTokenException('An AccessToken instance must be passed');
-        }
-
-        return $this->accessToken;
+        return $this->recipient;
     }
 
-    public function setEnvelope(Envelope $envelope): self
+    /**
+     * The PDF/A document to send.
+     */
+    public function document(Attachment $document): self
     {
-        $this->envelope = $envelope;
+        $this->document = $document;
 
         return $this;
     }
 
-    /**
-     * @throws MissingEnvelopeException
-     * @throws MissingRecipientException
-     */
-    public function getEnvelope(): Envelope
+    public function getDocument(): ?Attachment
     {
-        if ($this->envelope === null) {
-            throw new MissingEnvelopeException('No Envelope provided! Provide one beforehand');
-        }
-        if ($this->envelope->getData() === null) {
-            throw new MissingRecipientException('No recipient provided! Add them beforehand');
-        }
-
-        return $this->envelope;
+        return $this->document;
     }
 
     /**
-     * Path to a PDF used as cover letter instead of the standard cover sheet generated by the API.
+     * Use your own PDF as cover sheet. The API prints the recipient address on it.
+     */
+    public function coverSheet(?Attachment $coverSheet): self
+    {
+        $this->coverSheet = $coverSheet;
+        $this->generateCoverSheet = $coverSheet !== null;
+
+        return $this;
+    }
+
+    public function getCoverSheet(): ?Attachment
+    {
+        return $this->coverSheet;
+    }
+
+    /**
+     * Let the API generate its standard cover sheet with the recipient address.
+     */
+    public function generateCoverSheet(bool $generate = true): self
+    {
+        $this->generateCoverSheet = $generate;
+        if (!$generate) {
+            $this->coverSheet = null;
+        }
+
+        return $this;
+    }
+
+    public function hasCoverSheet(): bool
+    {
+        return $this->generateCoverSheet;
+    }
+
+    public function color(bool $color = true): self
+    {
+        $this->color = $color;
+
+        return $this;
+    }
+
+    public function isColor(): bool
+    {
+        return $this->color;
+    }
+
+    /**
+     * Duplex printing. Not allowed together with registered mail (E312).
+     */
+    public function duplex(bool $duplex = true): self
+    {
+        $this->duplex = $duplex;
+
+        return $this;
+    }
+
+    public function isDuplex(): bool
+    {
+        return $this->duplex;
+    }
+
+    /**
+     * Send as registered mail. Not allowed with duplex printing (E312) or an
+     * international recipient (E311).
+     */
+    public function registeredMail(?RegisteredMailType $type): self
+    {
+        $this->registeredMail = $type;
+
+        return $this;
+    }
+
+    public function getRegisteredMail(): ?RegisteredMailType
+    {
+        return $this->registeredMail;
+    }
+
+    /**
+     * Group letters for status queries with EPostClient::getLetterStatusByBatch().
+     */
+    public function batchId(?int $batchId): self
+    {
+        $this->batchId = $batchId;
+
+        return $this;
+    }
+
+    public function getBatchId(): ?int
+    {
+        return $this->batchId;
+    }
+
+    /**
+     * Free text stored with the letter and returned in status queries;
+     * custom1 can be searched with EPostClient::getLetterStatusByCustom1().
      *
-     * @throws InvalidFileFormatException when the file does not exist or is not a PDF
-     */
-    public function setCoverLetter(?string $coverLetterPath): self
-    {
-        if ($coverLetterPath !== null && $coverLetterPath !== '') {
-            $this->assertPdf($coverLetterPath, 'cover letter');
-        }
-        $this->coverLetterPath = $coverLetterPath;
-
-        return $this;
-    }
-
-    public function getCoverLetter(): ?string
-    {
-        return $this->coverLetterPath;
-    }
-
-    /**
-     * Path to the PDF/A document to send.
+     * @param int $number 1 to 5
      *
-     * @throws InvalidFileFormatException when the file does not exist or is not a PDF
+     * @throws ValidationException
      */
-    public function setAttachment(string $attachmentPath): self
+    public function custom(int $number, ?string $value): self
     {
-        $this->assertPdf($attachmentPath, 'attachment');
-        $this->attachmentPath = $attachmentPath;
-
-        return $this;
-    }
-
-    /**
-     * @throws MissingAttachmentException
-     */
-    public function getAttachment(): string
-    {
-        if ($this->attachmentPath === null || $this->attachmentPath === '') {
-            throw new MissingAttachmentException('No attachment provided! Please add an attachment.');
+        if ($number < 1 || $number > 5) {
+            throw new ValidationException('Custom field number must be between 1 and 5');
         }
-
-        return $this->attachmentPath;
-    }
-
-    public function setDeliveryOptions(?DeliveryOptions $deliveryOptions): self
-    {
-        $this->deliveryOptions = $deliveryOptions;
-
-        return $this;
-    }
-
-    public function getDeliveryOptions(): ?DeliveryOptions
-    {
-        return $this->deliveryOptions;
-    }
-
-    public function setLetterId(?string $letterId): self
-    {
-        $this->letterId = $letterId;
-
-        return $this;
-    }
-
-    /**
-     * @throws MissingPreconditionException when no letter ID was set or received from send()
-     */
-    public function getLetterId(): string
-    {
-        if ($this->letterId === null || $this->letterId === '') {
-            throw new MissingPreconditionException('No letter id provided! Set letter id beforehand');
-        }
-
-        return $this->letterId;
-    }
-
-    public function setTestEnvironment(bool $testEnvironment): self
-    {
-        $this->testEnvironment = $testEnvironment;
-
-        return $this;
-    }
-
-    /**
-     * Send the letter in test mode: the API processes it, emails the result as PDF to
-     * this address and does not print or post anything.
-     */
-    public function setTestEmail(?string $testEmail): self
-    {
-        $this->testEmail = $testEmail;
-
-        return $this;
-    }
-
-    public function getTestEmail(): ?string
-    {
-        return $this->testEmail;
-    }
-
-    public function isTestEnvironment(): bool
-    {
-        return $this->testEnvironment;
-    }
-
-    /**
-     * The JSON payload for this letter as expected by POST /api/Letter.
-     *
-     *
-     * @throws MissingEnvelopeException
-     * @throws MissingRecipientException
-     * @throws MissingAttachmentException
-     * @return array<string, mixed>
-     */
-    public function buildLetterPayload(): array
-    {
-        $payload = $this->getEnvelope()->getData() ?? [];
-
-        if ($this->coverLetterPath !== null && $this->coverLetterPath !== '') {
-            $payload['coverLetter'] = true;
-            $payload['coverData'] = $this->encodeFile($this->coverLetterPath);
+        Validate::maxLength('custom' . $number, $value, self::MAX_CUSTOM_LENGTH);
+        if ($value === null || $value === '') {
+            unset($this->custom[$number]);
         } else {
-            $payload['coverLetter'] = false;
+            $this->custom[$number] = $value;
         }
 
-        $attachmentPath = $this->getAttachment();
-        $payload['fileName'] = basename($attachmentPath);
-        $payload['data'] = $this->encodeFile($attachmentPath);
+        return $this;
+    }
 
-        if ($this->deliveryOptions !== null) {
-            $payload = array_merge($payload, $this->deliveryOptions->getData());
+    public function getCustom(int $number): ?string
+    {
+        return $this->custom[$number] ?? null;
+    }
+
+    /**
+     * Cost centre for invoice grouping: up to 8 characters, letters and digits only.
+     *
+     * @throws ValidationException
+     */
+    public function costCenter(?string $costCenter): self
+    {
+        Validate::maxLength('costCenter', $costCenter, self::MAX_COST_CENTER_LENGTH);
+        Validate::matches('costCenter', $costCenter, '/^[A-Za-z0-9]+$/', 'may only contain letters and digits');
+        $this->costCenter = $costCenter;
+
+        return $this;
+    }
+
+    public function getCostCenter(): ?string
+    {
+        return $this->costCenter;
+    }
+
+    /**
+     * Identifier of the sending software, up to 120 characters.
+     *
+     * @throws ValidationException
+     */
+    public function vendorSystemInformation(?string $information): self
+    {
+        Validate::maxLength('vendorSystemInformation', $information, self::MAX_VENDOR_SYSTEM_INFORMATION_LENGTH);
+        $this->vendorSystemInformation = $information;
+
+        return $this;
+    }
+
+    public function getVendorSystemInformation(): ?string
+    {
+        return $this->vendorSystemInformation;
+    }
+
+    /**
+     * Sender address printed on a generated cover sheet or by the Automover plugin.
+     */
+    public function sender(?SenderAddress $sender): self
+    {
+        $this->sender = $sender;
+
+        return $this;
+    }
+
+    public function getSender(): ?SenderAddress
+    {
+        return $this->sender;
+    }
+
+    /**
+     * Send in test mode: processed and emailed, not printed.
+     */
+    public function test(?TestOptions $test): self
+    {
+        $this->test = $test;
+
+        return $this;
+    }
+
+    public function getTest(): ?TestOptions
+    {
+        return $this->test;
+    }
+
+    /**
+     * Attach a plugin (UploadManagement, Automover, PremiumAdress). One instance per plugin.
+     */
+    public function plugIn(PlugInInterface $plugIn): self
+    {
+        $this->plugIns = array_values(array_filter(
+            $this->plugIns,
+            static fn(PlugInInterface $existing): bool => $existing->name() !== $plugIn->name(),
+        ));
+        $this->plugIns[] = $plugIn;
+
+        return $this;
+    }
+
+    /**
+     * @return list<PlugInInterface>
+     */
+    public function getPlugIns(): array
+    {
+        return $this->plugIns;
+    }
+
+    /**
+     * Reject the letter if an identical one was submitted with the same flag
+     * within the last hour (E324).
+     */
+    public function duplicateFailsafe(bool $enabled = true): self
+    {
+        $this->duplicateFailsafe = $enabled;
+
+        return $this;
+    }
+
+    public function hasDuplicateFailsafe(): bool
+    {
+        return $this->duplicateFailsafe;
+    }
+
+    /**
+     * The JSON object for POST /api/Letter, validated against the API's rules.
+     *
+     * @return array<string, mixed>
+     * @throws ValidationException
+     */
+    public function toPayload(): array
+    {
+        if ($this->recipient === null) {
+            throw new ValidationException('A recipient is required');
+        }
+        if ($this->document === null) {
+            throw new ValidationException('A PDF document is required');
+        }
+        $this->document->assertMaxSize(Attachment::MAX_LETTER_BYTES, 'document');
+        $this->coverSheet?->assertMaxSize(Attachment::MAX_COVER_SHEET_BYTES, 'cover sheet');
+
+        if ($this->registeredMail !== null) {
+            if ($this->duplex) {
+                throw new ValidationException('Registered mail cannot be printed duplex (API error E312)');
+            }
+            if ($this->recipient->isInternational()) {
+                throw new ValidationException('Registered mail is only available for German addresses (API error E311)');
+            }
+            foreach ($this->plugIns as $plugIn) {
+                if ($plugIn instanceof PremiumAdress) {
+                    throw new ValidationException('PremiumAdress is not available for registered mail');
+                }
+                if ($plugIn instanceof Automover) {
+                    throw new ValidationException('Automover cannot reposition addresses on registered mail');
+                }
+            }
         }
 
-        if ($this->testEmail !== null && $this->testEmail !== '') {
-            $payload['testFlag'] = true;
-            $payload['testEMail'] = $this->testEmail;
+        $payload = $this->recipient->toArray();
+        $payload['fileName'] = $this->document->fileName;
+        $payload['data'] = $this->document->base64();
+        $payload['isColor'] = $this->color;
+        $payload['isDuplex'] = $this->duplex;
+        $payload['coverLetter'] = $this->generateCoverSheet;
+        if ($this->coverSheet !== null) {
+            $payload['coverData'] = $this->coverSheet->base64();
+        }
+        if ($this->registeredMail !== null) {
+            $payload['registeredLetter'] = $this->registeredMail->value;
+        }
+        if ($this->batchId !== null) {
+            $payload['batchID'] = $this->batchId;
+        }
+        foreach ($this->custom as $number => $value) {
+            $payload['custom' . $number] = $value;
+        }
+        if ($this->costCenter !== null && $this->costCenter !== '') {
+            $payload['costCenter'] = $this->costCenter;
+        }
+        if ($this->vendorSystemInformation !== null && $this->vendorSystemInformation !== '') {
+            $payload['vendorSystemInformation'] = $this->vendorSystemInformation;
+        }
+        if ($this->sender !== null) {
+            $payload = array_merge($payload, $this->sender->toArray());
+        }
+        if ($this->test !== null) {
+            $payload = array_merge($payload, $this->test->toArray());
+        }
+        if ($this->plugIns !== []) {
+            $payload['plugInList'] = array_map(
+                static fn(PlugInInterface $plugIn): array => ['plugInName' => $plugIn->name(), 'plugInModel' => $plugIn->model()],
+                $this->plugIns,
+            );
+        }
+        if ($this->duplicateFailsafe) {
+            $payload['activateDuplicateFailsafe'] = true;
         }
 
         return $payload;
-    }
-
-    /**
-     * Submit this letter. The letter ID assigned by the API is available through getLetterId() afterwards.
-     *
-     * @throws ErrorException
-     */
-    public function send(): self
-    {
-        $results = $this->postLetters([$this->buildLetterPayload()]);
-        if (!isset($results[0])) {
-            throw new ErrorException(new Error(
-                Error::LEVEL_ERROR,
-                'E900',
-                'The API did not return a letter ID for the submitted letter',
-            ));
-        }
-        $this->letterId = (string) $results[0]->getLetterId();
-
-        return $this;
-    }
-
-    /**
-     * Submit several letters in one request. The letters are sent with the access
-     * token and HTTP client of this instance; the PDFs may total 300 MB per request.
-     *
-     * @param Letter[] $letters
-     *
-     *
-     * @throws ErrorException
-     * @return LetterSendResult[] One result per letter, in the same order
-     */
-    public function sendBatch(array $letters): array
-    {
-        if ($letters === []) {
-            return [];
-        }
-        $payloads = [];
-        foreach ($letters as $letter) {
-            if (!$letter instanceof Letter) {
-                throw new InvalidArgumentException('All items must be Letter instances');
-            }
-            $payloads[] = $letter->buildLetterPayload();
-        }
-
-        return $this->postLetters($payloads);
-    }
-
-    /**
-     * @param list<array<string, mixed>> $payloads
-     *
-     * @return LetterSendResult[]
-     */
-    private function postLetters(array $payloads): array
-    {
-        $body = $this->request('POST', '/api/Letter', ['json' => $payloads]);
-
-        return array_map(static fn(array $item) => LetterSendResult::fromArray($item), Json::decodeList($body));
-    }
-
-    /**
-     * Status of one letter. Uses the letter ID of this instance when none is given.
-     *
-     * @throws ErrorException with isNotFound() when the ID is unknown, isRateLimited() when polled too often
-     */
-    public function getLetterStatus(?string $letterId = null): LetterStatus
-    {
-        $id = $letterId ?? $this->getLetterId();
-        $body = $this->request('GET', '/api/Letter/' . rawurlencode($id));
-
-        return new LetterStatus(Json::decodeObject($body));
-    }
-
-    /**
-     * Status of several letters by ID.
-     *
-     * @param int[] $letterIds
-     * @param bool $onlyIssues Return only letters with errors or warnings
-     *
-     * @return LetterStatus[]
-     */
-    public function getMultipleLetterStatuses(array $letterIds = [], bool $onlyIssues = false): array
-    {
-        $body = $this->request('POST', '/api/Letter/StatusQuery', [
-            'query' => ['onlyIssues' => self::bool($onlyIssues)],
-            'json' => array_values($letterIds),
-        ]);
-
-        return $this->statusList($body);
-    }
-
-    /**
-     * Status of all letters created in a date range.
-     *
-     * @param string $fromDate Start date, e.g. "2024-01-01"
-     * @param string $tillDate End date, e.g. "2024-01-31"
-     *
-     * @return LetterStatus[]
-     */
-    public function getLetterStatusByDateRange(string $fromDate, string $tillDate, bool $onlyIssues = false): array
-    {
-        $body = $this->request('GET', '/api/Letter/Date', [
-            'query' => [
-                'fromDate' => $fromDate,
-                'tillDate' => $tillDate,
-                'onlyIssues' => self::bool($onlyIssues),
-            ],
-        ]);
-
-        return $this->statusList($body);
-    }
-
-    /**
-     * Status of all live letters that have not reached the print centre yet (status 1 to 3).
-     *
-     * @return LetterStatus[]
-     */
-    public function getOpenLetters(): array
-    {
-        return $this->statusList($this->request('GET', '/api/Letter/Open'));
-    }
-
-    /**
-     * Status of registered letters (Einschreiben) created in a date range.
-     *
-     * @param bool $onlyOpen Return only letters whose tracking status is not final
-     *
-     * @return LetterStatus[]
-     */
-    public function getRegisteredLetterStatus(string $fromDate, string $tillDate, bool $onlyOpen = false): array
-    {
-        $body = $this->request('GET', '/api/Letter/Registered', [
-            'query' => [
-                'fromDate' => $fromDate,
-                'tillDate' => $tillDate,
-                'onlyOpen' => self::bool($onlyOpen),
-            ],
-        ]);
-
-        return $this->statusList($body);
-    }
-
-    /**
-     * Status of all letters submitted with the given custom1 value.
-     *
-     * @return LetterStatus[]
-     */
-    public function getLetterStatusByCustom1(string $custom1, bool $onlyIssues = false): array
-    {
-        $body = $this->request('GET', '/api/Letter/Custom1', [
-            'query' => ['custom1' => $custom1, 'onlyIssues' => self::bool($onlyIssues)],
-        ]);
-
-        return $this->statusList($body);
-    }
-
-    /**
-     * Status of all letters submitted with the given batch ID.
-     *
-     * @return LetterStatus[]
-     */
-    public function getLetterStatusByBatch(int $batchId, bool $onlyIssues = false): array
-    {
-        $body = $this->request('GET', '/api/Letter/Batch', [
-            'query' => ['batchId' => $batchId, 'onlyIssues' => self::bool($onlyIssues)],
-        ]);
-
-        return $this->statusList($body);
-    }
-
-    /**
-     * Cancel letters that were submitted with the UploadManagement plugin and are still queued.
-     *
-     * @param int[] $letterIds
-     *
-     * @return QueuedOperationResult[]
-     */
-    public function cancelQueued(array $letterIds): array
-    {
-        return $this->queueOperation('/api/Letter/CancelQueued', $letterIds);
-    }
-
-    /**
-     * Release (expedite) letters that were submitted with the UploadManagement plugin and are still queued.
-     *
-     * @param int[] $letterIds
-     *
-     * @return QueuedOperationResult[]
-     */
-    public function releaseQueued(array $letterIds): array
-    {
-        return $this->queueOperation('/api/Letter/ReleaseQueued', $letterIds);
-    }
-
-    /**
-     * Status of letters sent with the PremiumAdress plugin in a date range.
-     *
-     * @param bool $onlyFeedback Return only letters that received PremiumAdress feedback
-     *
-     * @return LetterStatus[]
-     */
-    public function getPremiumAdressFeedback(string $fromDate, string $tillDate, bool $onlyFeedback = false): array
-    {
-        $body = $this->request('GET', '/api/Letter/PremiumAdressFeedback', [
-            'query' => [
-                'fromDate' => $fromDate,
-                'tillDate' => $tillDate,
-                'onlyFeedback' => self::bool($onlyFeedback),
-            ],
-        ]);
-
-        return $this->statusList($body);
-    }
-
-    /**
-     * Result PDF of a letter that was sent in test mode.
-     *
-     * @param string|null $letterId Letter ID of the test send (defaults to the current letter ID)
-     */
-    public function getTestResult(?string $letterId = null): LetterDataResult
-    {
-        $id = $letterId ?? $this->getLetterId();
-        $body = $this->request('GET', '/api/Letter/TestResult', ['query' => ['letterID' => $id]]);
-
-        return LetterDataResult::fromArray(Json::decodeObject($body));
-    }
-
-    /**
-     * @param int[] $letterIds
-     *
-     * @return QueuedOperationResult[]
-     */
-    private function queueOperation(string $uri, array $letterIds): array
-    {
-        $body = $this->request('POST', $uri, ['json' => array_values($letterIds)]);
-
-        return array_map(static fn(array $item) => QueuedOperationResult::fromArray($item), Json::decodeList($body));
-    }
-
-    /**
-     * @return LetterStatus[]
-     */
-    private function statusList(string $body): array
-    {
-        return array_map(static fn(array $item) => new LetterStatus($item), Json::decodeList($body));
-    }
-
-    /**
-     * Send a request and return the response body. 4xx responses become ErrorException.
-     *
-     * @param array<string, mixed> $options
-     *
-     * @throws ErrorException
-     */
-    private function request(string $method, string $uri, array $options = []): string
-    {
-        try {
-            $response = $this->getHttpClient()->request($method, $uri, $options);
-        } catch (ClientException $e) {
-            throw ErrorException::fromClientException($e);
-        }
-
-        return $response->getBody()->getContents();
-    }
-
-    private function getHttpClient(): ClientInterface
-    {
-        if ($this->httpClient !== null) {
-            return $this->httpClient;
-        }
-
-        return $this->createHttpClient([
-            'base_uri' => self::API_ENDPOINT,
-            'headers' => [
-                'Authorization' => 'Bearer ' . $this->getAccessToken()->getToken(),
-            ],
-        ]);
-    }
-
-    /**
-     * Create the Guzzle client used when none was injected. Override to add
-     * middleware, timeouts or a different base URI.
-     *
-     * @param array<string, mixed> $config Guzzle client configuration
-     */
-    protected function createHttpClient(array $config): ClientInterface
-    {
-        return new HttpClient($config);
-    }
-
-    /**
-     * @throws InvalidFileFormatException
-     */
-    private function assertPdf(string $path, string $what): void
-    {
-        if (!is_file($path) || !is_readable($path)) {
-            throw new InvalidFileFormatException(sprintf('The %s file "%s" does not exist or is not readable', $what, $path));
-        }
-        if (mime_content_type($path) !== 'application/pdf') {
-            throw new InvalidFileFormatException(sprintf('Unallowed file format for %s "%s". Allowed: pdf', $what, $path));
-        }
-    }
-
-    /**
-     * Base64 encode a file the way the API expects it (line-wrapped at 76 characters).
-     */
-    private function encodeFile(string $path): string
-    {
-        $contents = file_get_contents($path);
-        if ($contents === false) {
-            throw new InvalidFileFormatException(sprintf('The file "%s" could not be read', $path));
-        }
-
-        return chunk_split(base64_encode($contents));
-    }
-
-    private static function bool(bool $value): string
-    {
-        return $value ? 'true' : 'false';
     }
 }

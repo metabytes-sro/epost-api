@@ -7,7 +7,7 @@ use PhpCsFixer\Finder;
 use PhpCsFixer\Runner\Parallel\ParallelConfigFactory;
 
 $finder = (new Finder())
-    ->in([__DIR__ . '/src', __DIR__ . '/tests'])
+    ->in([__DIR__ . '/src', __DIR__ . '/tests', __DIR__ . '/examples'])
     ->append([__FILE__]);
 
 return (new Config())
@@ -17,7 +17,7 @@ return (new Config())
     ->setRules([
         '@PER-CS2.0' => true,
         '@PER-CS2.0:risky' => true,
-        '@PHP81Migration' => true,
+        '@PHP83Migration' => true,
         '@PHPUnit100Migration:risky' => true,
         'array_syntax' => ['syntax' => 'short'],
         'concat_space' => ['spacing' => 'one'],
@@ -30,8 +30,9 @@ return (new Config())
         'ordered_imports' => ['imports_order' => ['class', 'function', 'const'], 'sort_algorithm' => 'alpha'],
         'php_unit_method_casing' => ['case' => 'camel_case'],
         'phpdoc_align' => ['align' => 'left'],
-        'phpdoc_order' => true,
+        'phpdoc_order' => ['order' => ['param', 'return', 'throws']],
         'phpdoc_trim' => true,
+        'phpdoc_trim_consecutive_blank_line_separation' => true,
         'single_quote' => true,
         'trailing_comma_in_multiline' => ['elements' => ['arguments', 'arrays', 'match', 'parameters']],
         'yoda_style' => false,

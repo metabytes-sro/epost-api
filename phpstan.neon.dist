@@ -7,5 +7,6 @@ parameters:
     paths:
         - src
         - tests
+        - examples
     tmpDir: build/phpstan
     treatPhpDocTypesAsCertain: false

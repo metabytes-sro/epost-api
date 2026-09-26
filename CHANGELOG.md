@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING:** requires PHP 8.3. Version 1.x stays supported on the `1.x` branch for PHP 8.1 and 8.2.
+- **BREAKING:** the API client and the letter are separate objects: `EPostClient` sends letters and runs status queries, `Letter` only describes a letter. See UPGRADE.md for the complete mapping from 1.x.
+- **BREAKING:** value objects are immutable and validated: `Recipient`, `Attachment`, `SenderAddress`, `TestOptions`, `Auth\Credentials`, `LetterStatus`, `LetterSendResult`, `QueueResult`, `TestResult`, `Error`. Data is exposed as public readonly properties instead of getters.
+- **BREAKING:** one exception hierarchy under `Exception\EPostException`: `ApiException` with the subclasses `AuthenticationException`, `NotFoundException` and `RateLimitException`, `TransportException` for HTTP-level failures and `ValidationException` for invalid input. `ErrorException` and the `Missing*Exception` classes are gone.
+- **BREAKING:** `TrackStatusCodes` is the `TrackStatusCode` enum, `DeliveryOptions` registered-mail constants are the `RegisteredMailType` enum, `PriceConfig` tariff constants are the `Pricing\Tariff` enum.
+- **BREAKING:** dates are `DateTimeImmutable` in results and `DateTimeInterface` in queries; letter IDs are `int`.
+- HTTP goes through `Http\Transport`, which accepts any PSR-18 client and PSR-17 factories; Guzzle remains the default. HTTP 5xx responses become `ApiException`.
+- `ext-fileinfo` is no longer required; `ext-mbstring` is.
+
+### Added
+
+- `EPostClient::withCredentials()` and `withToken()` factories; `Auth\TokenProvider` with `CredentialsTokenProvider`, `StaticTokenProvider` and PSR-16 based `CachedTokenProvider`
+- Automatic re-login and single retry when the API reports an expired token (E101)
+- `Letter::batchId()`, `custom()`, `costCenter()`, `vendorSystemInformation()`, `sender()`, `duplicateFailsafe()` and `generateCoverSheet()`
+- Plugins `PlugIn\UploadManagement`, `PlugIn\Automover` and `PlugIn\PremiumAdress`, with `LetterStatus::$plugInFeedback` on the reading side
+- `ErrorCode` enum with level and description for every code documented in the API definition, and `ErrorLevel`
+- Pre-flight validation of registered mail with duplex (E312), registered mail abroad (E311), plugin conflicts, PDF header, file name characters, document and cover sheet size, and field lengths
+- `LetterStatus::errorsOnly()`, `warnings()`, `registeredMailType()`, `trackingStatus()`
+- `Recipient::NO_ZIP_CODE` and `Recipient::forAutomover()`
+- CI on PHP 8.3, 8.4 and 8.5; PHPUnit 13 supported
+- Runnable example scripts under `examples/`, framework integration notes in `docs/integration.md`, a release checklist in `RELEASING.md` and generated release-note categories
+
+### Removed
+
+- Everything deprecated in 1.1: `RegisteredLetterReturnAddress`, the "Einschreiben eigenhändig" options, `MissingReturnAddressException`, `InvalidFileFormat`
+- `AccessToken`, `Envelope`, `DeliveryOptions`, `LetterStatusError`, `LetterDataResult`, `QueuedOperationResult`, `TrackStatusCodes`, `Pricing\LetterFormat::fromWeightAndPages()`
+
 ## [1.1.0] - 2026-09-26
 
 ### Added

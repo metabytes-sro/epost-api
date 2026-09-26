@@ -4,21 +4,20 @@ declare(strict_types=1);
 
 namespace MetabytesSRO\EPost\Api\Tests\Exception;
 
-use LogicException;
+use GuzzleHttp\Exception\ConnectException;
+use GuzzleHttp\Psr7\Request;
+use InvalidArgumentException;
 use MetabytesSRO\EPost\Api\Error;
+use MetabytesSRO\EPost\Api\Exception\ApiException;
+use MetabytesSRO\EPost\Api\Exception\AuthenticationException;
 use MetabytesSRO\EPost\Api\Exception\EPostException;
-use MetabytesSRO\EPost\Api\Exception\ErrorException;
-use MetabytesSRO\EPost\Api\Exception\InvalidFileFormat;
-use MetabytesSRO\EPost\Api\Exception\InvalidFileFormatException;
-use MetabytesSRO\EPost\Api\Exception\InvalidRecipientDataException;
-use MetabytesSRO\EPost\Api\Exception\MissingAttachmentException;
-use MetabytesSRO\EPost\Api\Exception\MissingAuthorizationTokenException;
-use MetabytesSRO\EPost\Api\Exception\MissingEnvelopeException;
-use MetabytesSRO\EPost\Api\Exception\MissingPreconditionException;
-use MetabytesSRO\EPost\Api\Exception\MissingRecipientException;
-use MetabytesSRO\EPost\Api\Exception\MissingReturnAddressException;
+use MetabytesSRO\EPost\Api\Exception\NotFoundException;
+use MetabytesSRO\EPost\Api\Exception\RateLimitException;
+use MetabytesSRO\EPost\Api\Exception\TransportException;
+use MetabytesSRO\EPost\Api\Exception\ValidationException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 use Throwable;
 
 class ExceptionHierarchyTest extends TestCase
@@ -28,16 +27,13 @@ class ExceptionHierarchyTest extends TestCase
      */
     public static function exceptions(): iterable
     {
-        yield 'ErrorException' => [new ErrorException(new Error('Error', 'E900', 'x'))];
-        yield 'InvalidFileFormat' => [new InvalidFileFormat()];
-        yield 'InvalidFileFormatException' => [new InvalidFileFormatException()];
-        yield 'InvalidRecipientDataException' => [new InvalidRecipientDataException()];
-        yield 'MissingAttachmentException' => [new MissingAttachmentException()];
-        yield 'MissingAuthorizationTokenException' => [new MissingAuthorizationTokenException()];
-        yield 'MissingEnvelopeException' => [new MissingEnvelopeException()];
-        yield 'MissingPreconditionException' => [new MissingPreconditionException()];
-        yield 'MissingRecipientException' => [new MissingRecipientException()];
-        yield 'MissingReturnAddressException' => [new MissingReturnAddressException()];
+        $error = new Error('Error', 'E900', 'x');
+        yield 'ApiException' => [new ApiException($error)];
+        yield 'AuthenticationException' => [new AuthenticationException($error)];
+        yield 'NotFoundException' => [new NotFoundException($error)];
+        yield 'RateLimitException' => [new RateLimitException($error)];
+        yield 'TransportException' => [new TransportException('x')];
+        yield 'ValidationException' => [new ValidationException('x')];
     }
 
     #[DataProvider('exceptions')]
@@ -46,21 +42,23 @@ class ExceptionHierarchyTest extends TestCase
         self::assertContains(EPostException::class, class_implements($exception), $exception::class);
     }
 
-    public function testPreconditionExceptionsShareABase(): void
+    public function testBaseClasses(): void
     {
-        foreach ([
-            MissingAttachmentException::class,
-            MissingAuthorizationTokenException::class,
-            MissingEnvelopeException::class,
-            MissingRecipientException::class,
-        ] as $class) {
-            self::assertContains(MissingPreconditionException::class, class_parents($class), $class);
-        }
-        self::assertContains(LogicException::class, class_parents(MissingPreconditionException::class));
+        self::assertContains(RuntimeException::class, class_parents(ApiException::class));
+        self::assertContains(ApiException::class, class_parents(AuthenticationException::class));
+        self::assertContains(ApiException::class, class_parents(NotFoundException::class));
+        self::assertContains(ApiException::class, class_parents(RateLimitException::class));
+        self::assertContains(RuntimeException::class, class_parents(TransportException::class));
+        self::assertContains(InvalidArgumentException::class, class_parents(ValidationException::class));
     }
 
-    public function testNewFileFormatExceptionExtendsDeprecatedOne(): void
+    public function testTransportExceptionFromClientException(): void
     {
-        self::assertContains(InvalidFileFormat::class, class_parents(InvalidFileFormatException::class));
+        $cause = new ConnectException('timed out', new Request('GET', '/'));
+
+        $exception = TransportException::fromClientException($cause);
+
+        self::assertSame('The E-POST API could not be reached: timed out', $exception->getMessage());
+        self::assertSame($cause, $exception->getPrevious());
     }
 }

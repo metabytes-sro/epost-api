@@ -4,87 +4,54 @@ declare(strict_types=1);
 
 namespace MetabytesSRO\EPost\Api\Tests;
 
-use GuzzleHttp\Client;
-use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Psr7\Response;
-use MetabytesSRO\EPost\Api\Exception\ErrorException;
-use MetabytesSRO\EPost\Api\Letter;
+use MetabytesSRO\EPost\Api\Auth\Credentials;
+use MetabytesSRO\EPost\Api\Exception\AuthenticationException;
+use MetabytesSRO\EPost\Api\Exception\RateLimitException;
 use MetabytesSRO\EPost\Api\Login;
-use RuntimeException;
 
 class LoginTest extends ApiTestCase
 {
     public function testLoginPostsCredentialsAndReturnsToken(): void
     {
-        $login = new Login($this->mockClient(self::jsonResponse(['token' => 'jwt-token-abc'])));
+        $login = new Login($this->transport(self::jsonResponse(['token' => 'jwt-token-abc'])));
 
-        $response = $login->login('vendor', '1234567890', 'secret', 'password');
+        $response = $login->login(new Credentials('vendor', '1234567890', 'secret', 'password', 'sub', 30));
 
-        self::assertSame('jwt-token-abc', $response->getToken());
+        self::assertSame('jwt-token-abc', $response->token);
         $this->assertLastRequest('POST', '/api/Login', [], [
             'vendorID' => 'vendor',
             'ekp' => '1234567890',
             'secret' => 'secret',
             'password' => 'password',
+            'vendorSubID' => 'sub',
+            'tokenDuration' => 30,
         ]);
-    }
-
-    public function testLoginSendsOptionalFields(): void
-    {
-        $login = new Login($this->mockClient(self::jsonResponse(['token' => 't'])));
-
-        $login->login('vendor', '1234567890', 'secret', 'password', 'sub-1', 60);
-
-        $this->assertLastRequest('POST', '/api/Login', [], [
-            'vendorID' => 'vendor',
-            'ekp' => '1234567890',
-            'secret' => 'secret',
-            'password' => 'password',
-            'vendorSubID' => 'sub-1',
-            'tokenDuration' => 60,
-        ]);
-    }
-
-    public function testLoginOmitsEmptyVendorSubId(): void
-    {
-        $login = new Login($this->mockClient(self::jsonResponse(['token' => 't'])));
-
-        $login->login('vendor', '1234567890', 'secret', 'password', '');
-
-        self::assertArrayNotHasKey('vendorSubID', $this->lastRequestJson());
+        self::assertSame('', $this->lastRequest()->getHeaderLine('Authorization'));
     }
 
     public function testLoginRejectedCredentials(): void
     {
-        $login = new Login($this->mockClient(self::errorResponse(401, 'E001', 'Ungültige Zugangsdaten')));
+        $login = new Login($this->transport(self::errorResponse(401, 'E001', 'Ungültige Zugangsdaten')));
 
-        try {
-            $login->login('vendor', '1234567890', 'secret', 'wrong');
-            self::fail('Expected ErrorException');
-        } catch (ErrorException $e) {
-            self::assertSame('E001', $e->getCode());
-            self::assertTrue($e->isAuthenticationError());
-            self::assertSame('Error', $e->getLevel());
-        }
+        $this->expectException(AuthenticationException::class);
+        $this->expectExceptionMessage('Ungültige Zugangsdaten');
+        $login->login(new Credentials('vendor', '1234567890', 'secret', 'wrong'));
     }
 
     public function testSmsRequestReturnsResponseBody(): void
     {
-        $login = new Login($this->mockClient(new Response(202, [], 'SMS sent')));
+        $login = new Login($this->transport(new Response(202, [], 'SMS sent')));
 
-        $result = $login->smsRequest('vendor', '1234567890');
-
-        self::assertSame('SMS sent', $result);
+        self::assertSame('SMS sent', $login->smsRequest('vendor', '1234567890'));
         $this->assertLastRequest('POST', '/api/Login/smsRequest', [], ['vendorID' => 'vendor', 'ekp' => '1234567890']);
     }
 
     public function testSetPasswordReturnsSecret(): void
     {
-        $login = new Login($this->mockClient(new Response(200, [], 'new-secret-key')));
+        $login = new Login($this->transport(new Response(200, [], 'new-secret-key')));
 
-        $result = $login->setPassword('vendor', '1234567890', 'newPass123', '123456');
-
-        self::assertSame('new-secret-key', $result);
+        self::assertSame('new-secret-key', $login->setPassword('vendor', '1234567890', 'newPass123', '123456'));
         $this->assertLastRequest('POST', '/api/Login/setPassword', [], [
             'vendorID' => 'vendor',
             'ekp' => '1234567890',
@@ -95,7 +62,7 @@ class LoginTest extends ApiTestCase
 
     public function testHealthCheckReturnsStatusAsError(): void
     {
-        $login = new Login($this->mockClient(self::jsonResponse([
+        $login = new Login($this->transport(self::jsonResponse([
             'level' => 'Info',
             'code' => 'I501',
             'description' => 'API-Status: OK',
@@ -104,48 +71,24 @@ class LoginTest extends ApiTestCase
 
         $status = $login->healthCheck();
 
-        self::assertSame('I501', $status->getCode());
+        self::assertSame('I501', $status->code);
         self::assertTrue($status->isInfo());
-        self::assertSame('2026-09-26T10:00:00', $status->getDate());
+        self::assertSame('2026-09-26', $status->date?->format('Y-m-d'));
         $this->assertLastRequest('GET', '/api/Login/HealthCheck', []);
     }
 
     public function testHealthCheckRateLimited(): void
     {
-        $login = new Login($this->mockClient(self::errorResponse(429, 'E322', 'Zu häufige Abfragen')));
+        $login = new Login($this->transport(self::errorResponse(429, 'E322', 'Zu häufige Abfragen')));
 
-        $this->expectException(ErrorException::class);
-        $this->expectExceptionMessage('Zu häufige Abfragen');
+        $this->expectException(RateLimitException::class);
         $login->healthCheck();
     }
 
-    public function testDefaultHttpClientTargetsApiEndpoint(): void
+    public function testDefaultTransportDoesNotTouchTheNetwork(): void
     {
-        $login = new class extends Login {
-            /** @var array<string, mixed> */
-            public array $config = [];
-            public ?ClientInterface $created = null;
+        $login = new Login();
 
-            /**
-             * @param array<string, mixed> $config
-             */
-            protected function createHttpClient(array $config): ClientInterface
-            {
-                $this->config = $config;
-                $this->created = parent::createHttpClient($config);
-
-                // Never let the test reach the network.
-                throw new RuntimeException('stop');
-            }
-        };
-
-        try {
-            $login->smsRequest('vendor', '1234567890');
-        } catch (RuntimeException $e) {
-            self::assertSame('stop', $e->getMessage());
-        }
-
-        self::assertInstanceOf(Client::class, $login->created);
-        self::assertSame(['base_uri' => Letter::API_ENDPOINT], $login->config);
+        self::assertSame([], $this->requests, 'constructing ' . $login::class . ' must not send anything');
     }
 }

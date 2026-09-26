@@ -33,7 +33,7 @@ composer test:coverage
 
 ## Pull requests
 
-- Open the pull request against `master`.
+- Open the pull request against `master` (2.x). Fixes for the 1.x line go against the `1.x` branch.
 - Keep changes focused. Unrelated refactoring belongs in its own pull request.
 - Every change in behaviour needs a test. The suite runs against a mocked HTTP
   client, so no E-POST credentials are required.

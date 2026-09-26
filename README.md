@@ -9,15 +9,21 @@ Send PDF documents as physical letters through the Deutsche Post
 [E-POSTBUSINESS API](https://api.epost.docuguide.com/swagger/index.html), track
 their delivery, manage queued letters and estimate postage.
 
-- Typed request builders and response objects for every `/api/Letter` and `/api/Login` endpoint
-- One exception hierarchy: every API error becomes an `ErrorException` with the E-POST error code
-- Tracking status codes for registered mail (Einschreiben) with German descriptions
+- One client class for every `/api/Letter` endpoint, plus `Login` for account setup and the health check
+- Immutable, validated value objects: the client refuses letters the API would reject before sending anything
+- One exception hierarchy: `ApiException` with `AuthenticationException`, `NotFoundException` and `RateLimitException`, `TransportException` for network failures, `ValidationException` for bad input
+- Automatic re-login when the API reports an expired token
+- Enums for status IDs, registered-mail options, tracking codes and all 51 documented error codes
+- Plugins for scheduled sending (UploadManagement), address positioning (Automover) and address correction (PremiumAdress)
+- Any PSR-18 HTTP client; Guzzle is the default
 - Local price calculator based on the official Deutsche Post price lists
-- Tested against a mocked API on PHP 8.1 to 8.5, with 100% line coverage enforced in CI
+- Tested against a mocked API on PHP 8.3 to 8.5 with 100% line coverage enforced in CI
+
+Upgrading from 1.x? See [UPGRADE.md](UPGRADE.md). Runnable scripts are in
+[`examples/`](examples/README.md), and [`docs/integration.md`](docs/integration.md)
+shows how to wire the client into Laravel, Symfony or any PSR-11 container.
 
 ## Scope
-
-The package covers the letter and login parts of the E-POSTBUSINESS API:
 
 | API area | Covered |
 |----------|---------|
@@ -28,7 +34,7 @@ The package covers the letter and login parts of the E-POSTBUSINESS API:
 | `/api/Client` (changing the customer's contact email and mobile number) | No, and not planned |
 
 The vendor, campaign and client endpoints are out of scope for this package and
-will not be added. If you need them, call them with your own Guzzle client; the
+will not be added. If you need them, call them with your own HTTP client; the
 API definition is in [`docs/api/`](docs/api/README.md).
 
 ## Installation
@@ -37,107 +43,118 @@ API definition is in [`docs/api/`](docs/api/README.md).
 composer require metabytes-sro/epost-api
 ```
 
-Requires PHP 8.1 or newer, the `fileinfo` extension and Guzzle 7.
+Requires PHP 8.3 or newer. Version 1.x supports PHP 8.1 and 8.2.
 
 ## Quick start
 
 ```php
-use MetabytesSRO\EPost\Api\AccessToken;
-use MetabytesSRO\EPost\Api\Exception\ErrorException;
+use MetabytesSRO\EPost\Api\Attachment;
+use MetabytesSRO\EPost\Api\Auth\Credentials;
+use MetabytesSRO\EPost\Api\EPostClient;
+use MetabytesSRO\EPost\Api\Exception\EPostException;
 use MetabytesSRO\EPost\Api\Letter;
-use MetabytesSRO\EPost\Api\Metadata\Envelope;
-use MetabytesSRO\EPost\Api\Metadata\Envelope\Recipient;
+use MetabytesSRO\EPost\Api\Recipient;
 
-$token = new AccessToken($vendorId, $ekp, $secret, $password);
+$client = EPostClient::withCredentials(new Credentials($vendorId, $ekp, $secret, $password));
 
-$recipient = (new Recipient())
-    ->setAddressLine('Max Mustermann AG', 0)   // addressLine1: name or company
-    ->setAddressLine('Musterstrasse 99', 1)    // addressLine2: street
-    ->setZipCode('12345')
-    ->setCity('Bonn');
-
-$letter = (new Letter())
-    ->setAccessToken($token)
-    ->setEnvelope((new Envelope())->setRecipient($recipient))
-    ->setAttachment('/path/to/document.pdf');
+$letter = new Letter(
+    new Recipient('Max Mustermann AG', '12345', 'Bonn', 'Musterstraße 99'),
+    Attachment::fromFile('/path/to/document.pdf'),
+);
 
 try {
-    $letter->send();
-    $letterId = $letter->getLetterId();
-} catch (ErrorException $e) {
-    // $e->getCode() is the E-POST error code, e.g. "E301" (no PDF detected)
-    // $e->getMessage() is the description, $e->getError() the full Error object
+    $result = $client->sendLetter($letter);
+    $letterId = $result->letterId;
+} catch (EPostException $e) {
+    // see "Error handling" below
 }
 ```
 
-The attachment must be a PDF/A-1b document in DIN A4 portrait format with the
-recipient address positioned in the address window. See the
+The document must be PDF/A-1b in DIN A4 portrait with the recipient address in
+the address window, at most 20 MB and 94 pages. See the
 [API documentation](https://api.epost.docuguide.com/swagger/index.html) for the
 address template.
 
 ## Authentication
 
-`AccessToken` logs in lazily on first use and caches the JSON Web Token, which
-is valid for 24 hours by default.
+`EPostClient::withCredentials()` logs in on the first request and reuses the
+token, which the API issues for 24 hours. When the API reports the token as
+expired, the client logs in again and retries the request once.
 
 ```php
-$token = new AccessToken($vendorId, $ekp, $secret, $password);
+use MetabytesSRO\EPost\Api\Auth\CachedTokenProvider;
+use MetabytesSRO\EPost\Api\Auth\Credentials;
+use MetabytesSRO\EPost\Api\Auth\CredentialsTokenProvider;
+use MetabytesSRO\EPost\Api\EPostClient;
 
-// Reuse a token obtained elsewhere (OAuth2 provider, cache, previous request):
-$token = AccessToken::fromToken($jwt);
+// Credentials with the optional partner sub-ID and a shorter token lifetime in minutes
+$credentials = new Credentials($vendorId, $ekp, $secret, $password, vendorSubId: 'shop-7', tokenDuration: 60);
 
-// Log in again after the API reported E101 (token expired):
-$token->refresh();
+// A token obtained elsewhere (OAuth2 provider, previous request)
+$client = EPostClient::withToken($jwt);
+
+// Share the token between PHP processes through any PSR-16 cache
+$tokens = new CachedTokenProvider(new CredentialsTokenProvider($credentials), $psr16Cache);
+$client = new EPostClient($tokens);
 ```
 
-The `Login` class exposes the underlying endpoints, including the first-time
-setup flow and the health check:
+Account setup and the availability check live in `Login`:
 
 ```php
 use MetabytesSRO\EPost\Api\Login;
 
 $login = new Login();
-$login->smsRequest($vendorId, $ekp);                              // SMS code to the registered mobile
+$login->smsRequest($vendorId, $ekp);                               // SMS code to the registered mobile
 $secret = $login->setPassword($vendorId, $ekp, $newPassword, $smsCode);
-$response = $login->login($vendorId, $ekp, $secret, $password);   // ->getToken()
 
-$status = $login->healthCheck();   // Error object: I501 = OK, W501 = maintenance announced, E501 = inactive
+$status = $client->healthCheck();   // Error object: I501 = OK, W501 = maintenance announced, E501 = inactive
 ```
 
-## Sending letters
-
-### Delivery options
+## Building a letter
 
 ```php
-use MetabytesSRO\EPost\Api\Metadata\DeliveryOptions;
+use MetabytesSRO\EPost\Api\Attachment;
+use MetabytesSRO\EPost\Api\Letter;
+use MetabytesSRO\EPost\Api\Recipient;
+use MetabytesSRO\EPost\Api\RegisteredMailType;
+use MetabytesSRO\EPost\Api\SenderAddress;
+use MetabytesSRO\EPost\Api\TestOptions;
 
-$options = (new DeliveryOptions())
-    ->setColorColored()          // or setColorGrayscale()
-    ->setDuplex(true)
-    ->setRegisteredStandard();   // Einschreiben
-
-$letter->setDeliveryOptions($options);
+$letter = (new Letter())
+    ->recipient(new Recipient('Max Mustermann', '53115', 'Bonn', 'Musterstraße 1'))
+    ->document(Attachment::fromString($pdfBytes, 'RE-2024-001.pdf'))
+    ->color()
+    ->duplex()
+    ->batchId(4711)                          // group letters for getLetterStatusByBatch()
+    ->custom(1, 'RE-2024-001')               // custom1..custom5, searchable with getLetterStatusByCustom1()
+    ->costCenter('SALES01')
+    ->vendorSystemInformation('my-erp 1.2')
+    ->sender(SenderAddress::fromFields('Fa. Huber GmbH', 'Am Weg 1', '76887', 'Bad Bergzabern'))
+    ->duplicateFailsafe();                   // reject a duplicate submitted within the last hour
 ```
 
-Registered mail options accepted by the API:
+Every value object validates its input and throws `ValidationException` for
+empty mandatory fields, over-long values or invalid file names. `toPayload()`,
+called by `sendLetter()`, checks the combinations the API rejects: registered
+mail with duplex printing (E312), with an international recipient (E311) or with
+the PremiumAdress and Automover plugins.
 
-| Method | API value |
-|--------|-----------|
-| `setRegisteredStandard()` | `Einschreiben` |
-| `setRegisteredSubmissionOnly()` | `Einwurf Einschreiben` |
-| `setRegisteredWithReturnReceipt()` | `Einschreiben Rückschein` |
-| `setRegisteredNo()` | not registered |
-
-The API rejects duplex printing for registered letters (E312) and registered
-letters to international addresses (E311). For "Einschreiben Rückschein" the
-return address is read from the sender line in the letter's address window;
-explicit return address fields are obsolete and ignored by the API.
-
-### Cover letter
+### Registered mail
 
 ```php
-// Let the API generate a standard cover sheet with the address, or supply your own PDF:
-$letter->setCoverLetter('/path/to/cover.pdf');
+$letter->registeredMail(RegisteredMailType::Standard);        // Einschreiben
+$letter->registeredMail(RegisteredMailType::Submission);      // Einwurf Einschreiben
+$letter->registeredMail(RegisteredMailType::ReturnReceipt);   // Einschreiben Rückschein
+```
+
+For the return receipt the API takes the return address from the sender line in
+the letter's address window.
+
+### Cover sheet
+
+```php
+$letter->generateCoverSheet();                                        // standard cover sheet with the address
+$letter->coverSheet(Attachment::fromFile('/path/to/cover.pdf'));      // your own PDF, at most 500 KB
 ```
 
 ### Test mode
@@ -146,72 +163,80 @@ In test mode the API processes the letter and emails the result as PDF instead
 of printing it:
 
 ```php
-$letter->setTestEmail('test@example.com');
-$letter->send();
+$result = $client->sendLetter($letter->test(new TestOptions('test@example.com', showRestrictedArea: true)));
 
-$result = $letter->getTestResult();   // LetterDataResult
-file_put_contents('result.pdf', $result->getPdf());
+$pdf = $client->getTestResult($result->letterId)->pdf();
 ```
 
 ### International letters
 
 ```php
-$recipient
-    ->setAddressLine('Mario Rossi', 0)
-    ->setAddressLine('Via Roma 1', 1)
-    ->setZipCode('00100')          // three spaces when the country has no postal codes
-    ->setCity('Roma')
-    ->setCountry('ITALIEN');       // German name in capitals as per ISO 3166-1
+new Recipient('Mario Rossi', '00100', 'Roma', 'Via Roma 1', country: 'ITALIEN');   // German name in capitals (ISO 3166-1)
+new Recipient('Someone', Recipient::NO_ZIP_CODE, 'Dublin', country: 'IRLAND');     // three spaces where there is no postal code
+```
+
+### Plugins
+
+```php
+use MetabytesSRO\EPost\Api\PlugIn\Automover;
+use MetabytesSRO\EPost\Api\PlugIn\PremiumAdress;
+use MetabytesSRO\EPost\Api\PlugIn\PremiumAdressVariant;
+use MetabytesSRO\EPost\Api\PlugIn\UploadManagement;
+use MetabytesSRO\EPost\Api\PlugIn\Weekday;
+
+// Hold the letter until a due date, or collect for the minimum quantity of 50 per day
+$letter->plugIn(UploadManagement::dueInDays(3));
+$letter->plugIn(UploadManagement::dueOn(new DateTimeImmutable('2026-10-15')));
+$letter->plugIn(UploadManagement::dueOnWeekday(Weekday::Friday, useMinimumQuantity: true));
+
+// Let the API position the addresses on the first page
+$letter->plugIn(new Automover());
+$letter->recipient(Recipient::forAutomover());   // when the address is only printed on the document
+
+// Address correction feedback from Deutsche Post
+$letter->plugIn(new PremiumAdress(PremiumAdressVariant::Report));
 ```
 
 ### Batch sending
 
-Several letters in one request (up to 300 MB of PDFs per request):
-
 ```php
-$client = (new Letter())->setAccessToken($token);
-$results = $client->sendBatch([$letter1, $letter2, $letter3]);   // LetterSendResult[]
+$results = $client->sendLetters([$letter1, $letter2, $letter3]);   // one request, up to 300 MB of PDFs
 
 foreach ($results as $result) {
-    $result->getLetterId();
-    $result->getFileName();
+    $result->letterId;
 }
 ```
 
 ## Status queries
 
-All status methods return `LetterStatus` objects. The API allows one status
-query every 5 seconds; more frequent calls fail with `ErrorException::isRateLimited()`.
+All status methods return `LetterStatus` objects with a typed, read-only
+property for every field of the API. The API allows one status query every
+5 seconds; more frequent calls throw `RateLimitException`.
 
 ```php
-$client = (new Letter())->setAccessToken($token);
-
 $status = $client->getLetterStatus($letterId);
-$status->getStatus();          // LetterStatusId enum, or null for an unknown ID
-$status->isOpen();             // status 1-3: accepted, processed, sent to the print centre
-$status->isSent();             // status 4: print centre reported the letter as sent
-$status->hasError();           // status 99: see $status->getErrors()
-$status->getRegisteredLetterId();
-$status->getFrankierId();
-$status->getNumberOfPages();
 
-$client->getMultipleLetterStatuses([123, 456], onlyIssues: false);
-$client->getLetterStatusByDateRange('2024-01-01', '2024-01-31', onlyIssues: false);
+$status->status();               // LetterStatusId enum, or null for an unknown ID
+$status->isOpen();               // status 1-3: accepted, processed, transferred to the print centre
+$status->isSent();               // status 4: reported as sent by the print centre
+$status->hasError();             // status 99: see $status->errors
+$status->errorsOnly();           // Error objects with level "Error"
+$status->warnings();
+$status->printFeedbackDate;      // DateTimeImmutable or null
+$status->registeredLetterId;     // tracking number of registered mail
+$status->trackingStatus();       // TrackStatusCode enum with ->description() and ->isFinal()
+$status->frankierId;
+$status->numberOfPages;
+$status->plugInFeedback;         // PlugInFeedback objects, e.g. the PremiumAdress result
+$status->raw;                    // the JSON object as received
+
+$client->getLetterStatuses([123, 456], onlyIssues: true);
+$client->getLetterStatusByDateRange(new DateTimeImmutable('2024-01-01'), new DateTimeImmutable('2024-01-31'));
 $client->getOpenLetters();
-$client->getLetterStatusByCustom1('RE-000123');
-$client->getLetterStatusByBatch(12345);
-$client->getRegisteredLetterStatus('2024-01-01', '2024-01-31', onlyOpen: false);
-$client->getPremiumAdressFeedback('2024-01-01', '2024-01-31', onlyFeedback: false);
-```
-
-### Registered mail tracking
-
-```php
-use MetabytesSRO\EPost\Api\TrackStatusCodes;
-
-$code = $status->getRegisteredLetterStatus();        // e.g. "DELIVERED", "IN_DELIVERY"
-TrackStatusCodes::getDescription($code);             // German description
-TrackStatusCodes::isFinal($code);                    // true once delivery is complete
+$client->getLetterStatusByCustom1('RE-2024-001');
+$client->getLetterStatusByBatch(4711);
+$client->getRegisteredLetterStatus($from, $till, onlyOpen: true);
+$client->getPremiumAdressFeedback($from, $till, onlyFeedback: true);
 ```
 
 ### Processing status IDs
@@ -222,15 +247,15 @@ TrackStatusCodes::isFinal($code);                    // true once delivery is co
 | 2 | `ProcessingTheShipment` | PDF checked and released for the print centre |
 | 3 | `DeliveryToThePrintingCenter` | Transferred to the print centre |
 | 4 | `ProcessingInPrintingCenter` | Reported as sent by the print centre |
-| 99 | `ProcessingError` | Failed, see `getErrors()` |
+| 99 | `ProcessingError` | Failed, see `$errors` |
 
-## Queued letters (UploadManagement plugin)
+## Queued letters
 
-Letters submitted with the UploadManagement plugin wait for a minimum quantity
-or a due date. They can be cancelled or released early while they are queued:
+Letters submitted with the UploadManagement plugin wait for their due date or
+the minimum quantity. While queued they can be cancelled or released early:
 
 ```php
-$client->cancelQueued([74567567, 65765678]);    // QueuedOperationResult[]
+$client->cancelQueued([74567567, 65765678]);    // QueueResult[] with ->successful and ->message
 $client->releaseQueued([74567567, 65765678]);
 ```
 
@@ -241,87 +266,85 @@ Every exception thrown by this package implements
 
 | Exception | Thrown when |
 |-----------|-------------|
-| `ErrorException` | The API answered with an error (HTTP 4xx). `getCode()` is the E-POST code, `getError()` the parsed Error object. |
-| `InvalidFileFormatException` | An attachment or cover letter is missing on disk or not a PDF. |
-| `InvalidRecipientDataException` | Recipient data is incomplete or invalid. |
-| `MissingPreconditionException` and subclasses | Something required was not set, e.g. no envelope, attachment or access token. |
+| `ValidationException` | Input would be rejected by the API: missing fields, over-long values, not a PDF, conflicting options. Nothing was sent. |
+| `TransportException` | The API could not be reached: DNS, connection, TLS or timeout failure. The PSR-18 exception is `getPrevious()`. |
+| `ApiException` | The API answered with an error. `getCode()` is the E-POST code, `getError()` the parsed Error object, `getErrorCode()` the `ErrorCode` enum. |
+| `AuthenticationException` | Credentials rejected (E001, E002), token expired (E101) or HTTP 401. |
+| `NotFoundException` | No letter matched (E201, HTTP 404). |
+| `RateLimitException` | Too many calls (E322, E003, HTTP 429). Wait 5 seconds. |
 
 ```php
-use MetabytesSRO\EPost\Api\Exception\EPostException;
-use MetabytesSRO\EPost\Api\Exception\ErrorException;
+use MetabytesSRO\EPost\Api\Exception\ApiException;
+use MetabytesSRO\EPost\Api\Exception\RateLimitException;
+use MetabytesSRO\EPost\Api\Exception\TransportException;
+use MetabytesSRO\EPost\Api\Exception\ValidationException;
 
 try {
-    $client->getLetterStatus($letterId);
-} catch (ErrorException $e) {
-    if ($e->isRateLimited()) {          // HTTP 429 / E322: wait 5 seconds and retry
-    } elseif ($e->isNotFound()) {       // HTTP 404 / E201: unknown letter ID
-    } elseif ($e->isAuthenticationError()) {   // E001, E002, E101: log in again
-    }
-} catch (EPostException $e) {
-    // anything else raised by this package
+    $client->sendLetter($letter);
+} catch (ValidationException $e) {
+    // fix the input
+} catch (RateLimitException $e) {
+    sleep(RateLimitException::MIN_INTERVAL_SECONDS);
+} catch (ApiException $e) {
+    $e->getErrorCode()?->description();   // German text from the API definition
+} catch (TransportException $e) {
+    // retry later
 }
 ```
 
-Connection failures and timeouts are not converted; Guzzle's
-`ConnectException` propagates so you can apply your own retry policy.
-
-The complete catalogue of error, warning and info codes is in the `Error`
-schema of the [API definition](docs/api/README.md).
+The catalogue of error, warning and info codes is available as the `ErrorCode`
+enum, each with `level()` and `description()`.
 
 ## Price estimation
 
-The E-POSTBUSINESS API has no pricing endpoint for letters. The calculator uses
-the official Deutsche Post price lists (valid from 01.01.2025):
+The API has no pricing endpoint for letters. The calculator uses the official
+Deutsche Post price lists valid from 01.01.2025:
 
 ```php
 use MetabytesSRO\EPost\Api\Pricing\LetterPriceCalculator;
 use MetabytesSRO\EPost\Api\Pricing\PriceConfig;
+use MetabytesSRO\EPost\Api\Pricing\Tariff;
 
-$calculator = LetterPriceCalculator::fromEnv();
+$calculator = new LetterPriceCalculator(new PriceConfig(Tariff::Plus250));
 
-// weight in grams, pages, colour, duplex, international
-$price = $calculator->calculate(20, 1, false, false, false);        // 0.80 EUR
-$total = $calculator->calculateBatch(100, 50, 4, true, false, false);
+$calculator->calculate(weightGrams: 20, pages: 1);                                  // 0.73
+$calculator->calculate(50, 4, color: true, duplex: false, international: true);
+$calculator->calculateBatch(quantity: 100, weightGrams: 20, pages: 2);
 ```
 
-Environment variables:
+Negotiated prices are merged into the defaults, either in code or through the
+environment:
 
 | Variable | Description |
 |----------|-------------|
 | `EPOST_TARIFF` | `basis` (default) or `250plus` |
-| `EPOST_PRICES_JSON` | JSON object with negotiated prices; merged into the defaults |
+| `EPOST_PRICES_JSON` | JSON object with the prices that differ from the defaults |
+
+```php
+$calculator = LetterPriceCalculator::fromEnv();
+```
 
 ```
 EPOST_TARIFF=250plus
-EPOST_PRICES_JSON={"national":{"basis":{"standard":{"sw_simplex":0.75}}}}
+EPOST_PRICES_JSON={"national":{"250plus":{"standard":{"sw_simplex":0.70}}}}
 ```
-
-Price lists: [national](https://www.deutschepost.de/dam/jcr:4f6b160f-5beb-470a-9891-81e02acdd6e6/dp-epost-preisliste-mailer-basis_250+-ab%2001012025.pdf),
-[international](https://www.deutschepost.de/dam/jcr:d7e72ba2-a855-4b1d-9300-3c5c6745bf86/dp-epost-preisliste-international-mailer-basis-ab-01012025_vf.pdf).
 
 ## Custom HTTP client
 
-Pass a configured Guzzle client to add timeouts, logging or retries. It must
-carry the base URI and the `Authorization: Bearer` header itself:
+The client accepts any PSR-18 client through `Transport`. Guzzle is used when
+none is given.
 
 ```php
 use GuzzleHttp\Client;
+use MetabytesSRO\EPost\Api\EPostClient;
+use MetabytesSRO\EPost\Api\Http\Transport;
 
-$http = new Client([
-    'base_uri' => Letter::API_ENDPOINT,
-    'timeout' => 30,
-    'headers' => ['Authorization' => 'Bearer ' . $token->getToken()],
-]);
+$transport = new Transport(new Client(['timeout' => 30]));
+$client = EPostClient::withCredentials($credentials, $transport);
 
-$client = new Letter($http);
+// Any other PSR-18 client, with PSR-17 factories:
+$transport = new Transport($symfonyPsr18Client, $psr17Factory, $psr17Factory);
 ```
-
-Alternatively extend `Letter` or `Login` and override `createHttpClient()`.
-
-## Upgrading
-
-See [UPGRADE.md](UPGRADE.md) for behaviour changes and deprecations between
-versions, and [CHANGELOG.md](CHANGELOG.md) for the full history.
 
 ## Contributing
 
