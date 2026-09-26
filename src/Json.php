@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace MetabytesSRO\EPost\Api;
 
+use DateTimeImmutable;
+use Exception;
 use JsonException;
 
 /**
@@ -127,6 +129,23 @@ final class Json
         }
 
         return (bool) $value;
+    }
+
+    /**
+     * Date string from the API ("2024-01-15T10:30:00" or "2024-01-15") as
+     * DateTimeImmutable, null when missing, empty or unparsable.
+     */
+    public static function date(mixed $value): ?DateTimeImmutable
+    {
+        $string = self::string($value);
+        if ($string === null || trim($string) === '') {
+            return null;
+        }
+        try {
+            return new DateTimeImmutable($string);
+        } catch (Exception) {
+            return null;
+        }
     }
 
     /**

@@ -5,15 +5,16 @@ declare(strict_types=1);
 namespace MetabytesSRO\EPost\Api;
 
 /**
- * Result from Letter::send() or Letter::sendBatch(): the letter ID assigned by the API.
+ * Result of submitting a letter: the ID assigned by the API, which identifies
+ * the letter in every later status query.
  *
  * @see https://api.epost.docuguide.com/swagger/v2/swagger.json LetterIdent schema
  */
-class LetterSendResult
+final readonly class LetterSendResult
 {
     public function __construct(
-        private readonly int $letterId,
-        private readonly ?string $fileName = null,
+        public int $letterId,
+        public ?string $fileName = null,
     ) {}
 
     /**
@@ -25,15 +26,5 @@ class LetterSendResult
             Json::int($data['letterID'] ?? null) ?? 0,
             Json::string($data['fileName'] ?? null),
         );
-    }
-
-    public function getLetterId(): int
-    {
-        return $this->letterId;
-    }
-
-    public function getFileName(): ?string
-    {
-        return $this->fileName;
     }
 }

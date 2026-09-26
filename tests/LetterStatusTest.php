@@ -5,8 +5,9 @@ declare(strict_types=1);
 namespace MetabytesSRO\EPost\Api\Tests;
 
 use MetabytesSRO\EPost\Api\LetterStatus;
-use MetabytesSRO\EPost\Api\LetterStatusError;
 use MetabytesSRO\EPost\Api\LetterStatusId;
+use MetabytesSRO\EPost\Api\RegisteredMailType;
+use MetabytesSRO\EPost\Api\TrackStatusCode;
 use PHPUnit\Framework\TestCase;
 
 class LetterStatusTest extends TestCase
@@ -16,7 +17,7 @@ class LetterStatusTest extends TestCase
      *
      * @return array<string, mixed>
      */
-    private static function fixture(): array
+    public static function fixture(): array
     {
         return [
             'letterID' => 43556780,
@@ -55,6 +56,9 @@ class LetterStatusTest extends TestCase
             'destinationAreaStatusDate' => '2024-01-12',
             'errorList' => [
                 ['level' => 'Warning', 'code' => 'W201', 'description' => 'Überschreitung Adressbereich', 'date' => '2024-01-10T08:05:00'],
+                ['level' => 'Error', 'code' => 'E318', 'description' => 'Ablehnung in Druckzentrum'],
+                ['level' => 'Info', 'code' => 'I101', 'description' => 'PDF -> PDFA'],
+                'not an object',
             ],
             'plugInFeedbackList' => [
                 ['plugInName' => 'PremiumAdress', 'plugInFeedbackModel' => ['productVariants' => 'Basic']],
@@ -62,152 +66,117 @@ class LetterStatusTest extends TestCase
         ];
     }
 
-    public function testTypedGetters(): void
+    public function testFromArrayMapsEveryField(): void
     {
-        $status = new LetterStatus(self::fixture());
+        $status = LetterStatus::fromArray(self::fixture());
 
-        self::assertSame(43556780, $status->getLetterId());
-        self::assertSame('RE0136645.pdf', $status->getFileName());
-        self::assertSame(4, $status->getStatusId());
-        self::assertSame(LetterStatusId::ProcessingInPrintingCenter, $status->getStatus());
-        self::assertSame('Verarbeitung in Druckzentrum', $status->getStatusDetails());
-        self::assertSame('2024-01-10T08:00:00', $status->getCreatedDate());
-        self::assertSame('2024-01-10T08:05:00', $status->getProcessedDate());
-        self::assertSame('2024-01-10T12:00:00', $status->getPrintUploadDate());
-        self::assertSame('2024-01-11T09:00:00', $status->getPrintFeedbackDate());
-        self::assertFalse($status->isTestFlag());
-        self::assertNull($status->getTestEmail());
-        self::assertFalse($status->isTestShowRestrictedArea());
-        self::assertSame('Einschreiben', $status->getRegisteredLetter());
-        self::assertTrue($status->isRegisteredLetter());
-        self::assertSame('RR123456789DE', $status->getRegisteredLetterId());
-        self::assertSame(12345, $status->getBatchId());
-        self::assertTrue($status->hasCoverLetter());
-        self::assertSame(3, $status->getNumberOfPages());
-        self::assertSame('sub-7', $status->getSubVendorId());
-        self::assertSame('RE0136645', $status->getCustom1());
-        self::assertSame('c2', $status->getCustom2());
-        self::assertSame('c3', $status->getCustom3());
-        self::assertSame('c4', $status->getCustom4());
-        self::assertSame('c5', $status->getCustom5());
-        self::assertSame('53115', $status->getZipCode());
-        self::assertSame('Bonn', $status->getCity());
-        self::assertSame('', $status->getCountry());
-        self::assertTrue($status->isColor());
-        self::assertFalse($status->isDuplex());
-        self::assertSame('DELIVERED', $status->getRegisteredLetterStatus());
-        self::assertSame('2024-01-15', $status->getRegisteredLetterStatusDate());
-        self::assertSame('my-erp 1.2', $status->getVendorSystemInformation());
-        self::assertSame('KST01', $status->getCostCenter());
-        self::assertSame('FR-1', $status->getFrankierId());
-        self::assertSame('ARRIVED', $status->getDestinationAreaStatus());
-        self::assertSame('2024-01-12', $status->getDestinationAreaStatusDate());
+        self::assertSame(43556780, $status->letterId);
+        self::assertSame('RE0136645.pdf', $status->fileName);
+        self::assertSame(4, $status->statusId);
+        self::assertSame(LetterStatusId::ProcessingInPrintingCenter, $status->status());
+        self::assertSame('Verarbeitung in Druckzentrum', $status->statusDetails);
+        self::assertSame('2024-01-10 08:00:00', $status->createdDate?->format('Y-m-d H:i:s'));
+        self::assertSame('2024-01-10 08:05:00', $status->processedDate?->format('Y-m-d H:i:s'));
+        self::assertSame('2024-01-10 12:00:00', $status->printUploadDate?->format('Y-m-d H:i:s'));
+        self::assertSame('2024-01-11 09:00:00', $status->printFeedbackDate?->format('Y-m-d H:i:s'));
+        self::assertFalse($status->testFlag);
+        self::assertNull($status->testEmail);
+        self::assertFalse($status->testShowRestrictedArea);
+        self::assertSame('Einschreiben', $status->registeredLetter);
+        self::assertTrue($status->isRegisteredMail());
+        self::assertSame(RegisteredMailType::Standard, $status->registeredMailType());
+        self::assertSame('RR123456789DE', $status->registeredLetterId);
+        self::assertSame('DELIVERED', $status->registeredLetterStatus);
+        self::assertSame(TrackStatusCode::Delivered, $status->trackingStatus());
+        self::assertSame('2024-01-15', $status->registeredLetterStatusDate?->format('Y-m-d'));
+        self::assertSame(12345, $status->batchId);
+        self::assertTrue($status->coverLetter);
+        self::assertSame(3, $status->numberOfPages);
+        self::assertSame('sub-7', $status->subVendorId);
+        self::assertSame('RE0136645', $status->custom1);
+        self::assertSame('c2', $status->custom2);
+        self::assertSame('c3', $status->custom3);
+        self::assertSame('c4', $status->custom4);
+        self::assertSame('c5', $status->custom5);
+        self::assertSame('53115', $status->zipCode);
+        self::assertSame('Bonn', $status->city);
+        self::assertSame('', $status->country);
+        self::assertTrue($status->isColor);
+        self::assertFalse($status->isDuplex);
+        self::assertSame('my-erp 1.2', $status->vendorSystemInformation);
+        self::assertSame('KST01', $status->costCenter);
+        self::assertSame('FR-1', $status->frankierId);
+        self::assertSame('ARRIVED', $status->destinationAreaStatus);
+        self::assertSame('2024-01-12', $status->destinationAreaStatusDate?->format('Y-m-d'));
+        self::assertSame(self::fixture(), $status->raw);
+
+        self::assertCount(3, $status->errors);
+        self::assertSame('W201', $status->errors[0]->code);
+        self::assertSame('2024-01-10 08:05:00', $status->errors[0]->date?->format('Y-m-d H:i:s'));
+        self::assertSame(['E318'], array_map(static fn($e) => $e->code, $status->errorsOnly()));
+        self::assertSame(['W201'], array_map(static fn($e) => $e->code, $status->warnings()));
+
+        self::assertCount(1, $status->plugInFeedback);
+        self::assertSame('PremiumAdress', $status->plugInFeedback[0]->name);
+        self::assertSame(['productVariants' => 'Basic'], $status->plugInFeedback[0]->model);
     }
 
-    public function testGettersReturnNullOrFalseForMissingFields(): void
+    public function testDefaultsForEmptyObject(): void
     {
-        $status = new LetterStatus([]);
+        $status = LetterStatus::fromArray([]);
 
-        self::assertSame(0, $status->getLetterId());
-        self::assertSame(0, $status->getStatusId());
-        self::assertNull($status->getStatus());
-        self::assertNull($status->getFileName());
-        self::assertNull($status->getStatusDetails());
-        self::assertNull($status->getCreatedDate());
-        self::assertNull($status->getProcessedDate());
-        self::assertNull($status->getPrintUploadDate());
-        self::assertNull($status->getPrintFeedbackDate());
-        self::assertFalse($status->isTestFlag());
-        self::assertNull($status->getTestEmail());
-        self::assertNull($status->getRegisteredLetter());
-        self::assertFalse($status->isRegisteredLetter());
-        self::assertNull($status->getRegisteredLetterId());
-        self::assertNull($status->getBatchId());
-        self::assertFalse($status->hasCoverLetter());
-        self::assertNull($status->getNumberOfPages());
-        self::assertNull($status->getSubVendorId());
-        self::assertNull($status->getCustom1());
-        self::assertNull($status->getZipCode());
-        self::assertNull($status->getCity());
-        self::assertNull($status->getCountry());
-        self::assertFalse($status->isColor());
-        self::assertFalse($status->isDuplex());
-        self::assertNull($status->getRegisteredLetterStatus());
-        self::assertNull($status->getRegisteredLetterStatusDate());
-        self::assertNull($status->getVendorSystemInformation());
-        self::assertNull($status->getCostCenter());
-        self::assertNull($status->getFrankierId());
-        self::assertNull($status->getDestinationAreaStatus());
-        self::assertNull($status->getDestinationAreaStatusDate());
-        self::assertSame([], $status->getErrors());
-        self::assertSame([], $status->getPlugInFeedback());
+        self::assertSame(0, $status->letterId);
+        self::assertSame(0, $status->statusId);
+        self::assertNull($status->status());
+        self::assertNull($status->fileName);
+        self::assertNull($status->createdDate);
+        self::assertFalse($status->testFlag);
+        self::assertNull($status->registeredLetter);
+        self::assertFalse($status->isRegisteredMail());
+        self::assertNull($status->registeredMailType());
+        self::assertNull($status->trackingStatus());
+        self::assertNull($status->batchId);
+        self::assertSame([], $status->errors);
+        self::assertSame([], $status->plugInFeedback);
+        self::assertSame([], $status->raw);
         self::assertFalse($status->isOpen());
         self::assertFalse($status->isSent());
         self::assertFalse($status->hasError());
     }
 
+    public function testUnknownEnumValuesYieldNull(): void
+    {
+        $status = LetterStatus::fromArray([
+            'statusID' => 50,
+            'registeredLetter' => 'Einschreiben eigenhändig',
+            'registeredLetterStatus' => 'TELEPORTED',
+        ]);
+
+        self::assertNull($status->status());
+        self::assertTrue($status->isRegisteredMail());
+        self::assertNull($status->registeredMailType());
+        self::assertNull($status->trackingStatus());
+    }
+
     public function testEmptyRegisteredLetterCountsAsNotRegistered(): void
     {
-        self::assertFalse((new LetterStatus(['registeredLetter' => '']))->isRegisteredLetter());
+        self::assertFalse(LetterStatus::fromArray(['registeredLetter' => ''])->isRegisteredMail());
     }
 
     public function testStatusHelpers(): void
     {
-        self::assertTrue((new LetterStatus(['statusID' => 1]))->isOpen());
-        self::assertTrue((new LetterStatus(['statusID' => 3]))->isOpen());
-        self::assertFalse((new LetterStatus(['statusID' => 4]))->isOpen());
-        self::assertTrue((new LetterStatus(['statusID' => 4]))->isSent());
-        self::assertTrue((new LetterStatus(['statusID' => 99]))->hasError());
-        self::assertNull((new LetterStatus(['statusID' => 50]))->getStatus());
-        self::assertSame(LetterStatusId::ProcessingError, (new LetterStatus(['statusID' => '99']))->getStatus());
+        self::assertTrue(LetterStatus::fromArray(['statusID' => 1])->isOpen());
+        self::assertTrue(LetterStatus::fromArray(['statusID' => 3])->isOpen());
+        self::assertFalse(LetterStatus::fromArray(['statusID' => 4])->isOpen());
+        self::assertTrue(LetterStatus::fromArray(['statusID' => 4])->isSent());
+        self::assertTrue(LetterStatus::fromArray(['statusID' => '99'])->hasError());
     }
 
-    public function testGetErrorsReturnsTypedList(): void
+    public function testMalformedListsAreIgnored(): void
     {
-        $status = new LetterStatus(self::fixture());
+        $status = LetterStatus::fromArray(['errorList' => 'oops', 'plugInFeedbackList' => 42]);
 
-        $errors = $status->getErrors();
-
-        self::assertCount(1, $errors);
-        self::assertInstanceOf(LetterStatusError::class, $errors[0]);
-        self::assertSame('W201', $errors[0]->getCode());
-        self::assertSame('Überschreitung Adressbereich', $errors[0]->getDescription());
-        self::assertSame('2024-01-10T08:05:00', $errors[0]->getDate());
-        self::assertTrue($errors[0]->isWarning());
-    }
-
-    public function testGetErrorsIgnoresMalformedItems(): void
-    {
-        $status = new LetterStatus(['errorList' => ['not an object', ['code' => 'E301']]]);
-
-        $errors = $status->getErrors();
-
-        self::assertCount(1, $errors);
-        self::assertSame('E301', $errors[0]->getCode());
-    }
-
-    public function testGetErrorsWithNonListValue(): void
-    {
-        self::assertSame([], (new LetterStatus(['errorList' => 'oops']))->getErrors());
-    }
-
-    public function testGetPlugInFeedback(): void
-    {
-        $status = new LetterStatus(self::fixture());
-
-        $feedback = $status->getPlugInFeedback();
-
-        self::assertCount(1, $feedback);
-        self::assertSame('PremiumAdress', $feedback[0]['plugInName']);
-        self::assertSame(['productVariants' => 'Basic'], $feedback[0]['plugInFeedbackModel']);
-    }
-
-    public function testRawAccess(): void
-    {
-        $status = new LetterStatus(['letterID' => 1, 'somethingNew' => 'x']);
-
-        self::assertSame('x', $status->get('somethingNew'));
-        self::assertNull($status->get('missing'));
-        self::assertSame(['letterID' => 1, 'somethingNew' => 'x'], $status->toArray());
+        self::assertSame([], $status->errors);
+        self::assertSame([], $status->plugInFeedback);
     }
 }

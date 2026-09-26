@@ -122,4 +122,24 @@ class JsonTest extends TestCase
     {
         self::assertSame($expected, Json::bool($value));
     }
+
+    /**
+     * @return iterable<string, array{mixed, ?string}>
+     */
+    public static function dates(): iterable
+    {
+        yield 'date time' => ['2024-01-15T10:30:00', '2024-01-15 10:30:00'];
+        yield 'date only' => ['2024-01-15', '2024-01-15 00:00:00'];
+        yield 'empty' => ['', null];
+        yield 'blank' => ['   ', null];
+        yield 'null' => [null, null];
+        yield 'garbage' => ['not a date', null];
+        yield 'array' => [[], null];
+    }
+
+    #[DataProvider('dates')]
+    public function testDate(mixed $value, ?string $expected): void
+    {
+        self::assertSame($expected, Json::date($value)?->format('Y-m-d H:i:s'));
+    }
 }

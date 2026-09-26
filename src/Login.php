@@ -4,136 +4,88 @@ declare(strict_types=1);
 
 namespace MetabytesSRO\EPost\Api;
 
-use GuzzleHttp\Client as HttpClient;
-use GuzzleHttp\ClientInterface;
-use GuzzleHttp\Exception\ClientException;
-use MetabytesSRO\EPost\Api\Exception\ErrorException;
+use MetabytesSRO\EPost\Api\Auth\Credentials;
+use MetabytesSRO\EPost\Api\Exception\ApiException;
+use MetabytesSRO\EPost\Api\Exception\TransportException;
+use MetabytesSRO\EPost\Api\Http\Transport;
 
 /**
  * Authentication endpoints of the E-POSTBUSINESS API (/api/Login).
  *
- * API errors (HTTP 4xx) are converted to ErrorException. Timeouts and connection
- * failures (GuzzleHttp\Exception\ConnectException) are not caught; callers should
- * handle these themselves.
+ * Usually you do not call login() yourself: EPostClient::withCredentials() does
+ * it on demand through Auth\CredentialsTokenProvider. The other methods cover
+ * the one-time account setup and the availability check.
  */
-class Login
+final readonly class Login
 {
     public function __construct(
-        private readonly ?ClientInterface $httpClient = null,
+        private Transport $transport = new Transport(),
     ) {}
 
     /**
      * Request a JSON Web Token for the other endpoints of the API.
      *
-     * @param string $vendorId DPAG identifier of the software vendor
-     * @param string $ekp DPAG identifier of the customer (10 characters)
-     * @param string $secret Secret returned when the password was set (setPassword())
-     * @param string $password Password chosen by the customer
-     * @param string|null $vendorSubId Optional partner-managed customer identifier
-     * @param int|null $tokenDuration Optional token lifetime in minutes; default and maximum is 1440 (24 hours)
-     *
-     * @throws ErrorException when the credentials are rejected (E001, E002) or the API returns another error
+     * @throws Exception\AuthenticationException when the credentials are rejected (E001, E002)
+     * @throws ApiException for other API errors
+     * @throws TransportException
      */
-    public function login(
-        string $vendorId,
-        string $ekp,
-        string $secret,
-        string $password,
-        ?string $vendorSubId = null,
-        ?int $tokenDuration = null,
-    ): LoginResponse {
-        $requestBody = [
-            'vendorID' => $vendorId,
-            'ekp' => $ekp,
-            'secret' => $secret,
-            'password' => $password,
-        ];
-        if ($vendorSubId !== null && $vendorSubId !== '') {
-            $requestBody['vendorSubID'] = $vendorSubId;
-        }
-        if ($tokenDuration !== null) {
-            $requestBody['tokenDuration'] = $tokenDuration;
-        }
+    public function login(Credentials $credentials): LoginResponse
+    {
+        $response = $this->transport->request('POST', '/api/Login', null, $credentials->toArray());
 
-        $body = $this->post('/api/Login', $requestBody);
-
-        return LoginResponse::fromArray(Json::decodeObject($body));
+        return LoginResponse::fromArray(Json::decodeObject((string) $response->getBody()));
     }
 
     /**
      * Request an SMS code to the customer's registered mobile number, needed for setPassword().
      *
      * @return string Raw response body of the API
+     * @throws ApiException
+     * @throws TransportException
      */
     public function smsRequest(string $vendorId, string $ekp): string
     {
-        return $this->post('/api/Login/smsRequest', ['vendorID' => $vendorId, 'ekp' => $ekp]);
+        $response = $this->transport->request('POST', '/api/Login/smsRequest', null, [
+            'vendorID' => $vendorId,
+            'ekp' => $ekp,
+        ]);
+
+        return (string) $response->getBody();
     }
 
     /**
      * Set a new password using the SMS code from smsRequest().
      *
-     * @return string The secret to use for login()
+     * @return string The secret to use in Credentials
+     * @throws ApiException
+     * @throws TransportException
      */
     public function setPassword(string $vendorId, string $ekp, string $newPassword, string $smsCode): string
     {
-        return $this->post('/api/Login/setPassword', [
+        $response = $this->transport->request('POST', '/api/Login/setPassword', null, [
             'vendorID' => $vendorId,
             'ekp' => $ekp,
             'newPassword' => $newPassword,
             'smsCode' => $smsCode,
         ]);
+
+        return (string) $response->getBody();
     }
 
     /**
      * Availability status of the API.
      *
-     * The API answers with an Error object whose code is I501 (OK), W501 (maintenance
-     * announced) or E501 (inactive). Calls must be at least 5 seconds apart.
+     * The API answers with an Error object whose code is I501 (OK), W501
+     * (maintenance announced) or E501 (inactive). Calls must be at least 5
+     * seconds apart.
+     *
+     * @throws ApiException
+     * @throws TransportException
      */
     public function healthCheck(): Error
     {
-        try {
-            $response = $this->getHttpClient()->request('GET', '/api/Login/HealthCheck');
-        } catch (ClientException $e) {
-            throw ErrorException::fromClientException($e);
-        }
+        $response = $this->transport->request('GET', '/api/Login/HealthCheck');
 
-        return Error::fromArray(Json::decodeObject($response->getBody()->getContents()));
-    }
-
-    /**
-     * @param array<string, mixed> $requestBody
-     *
-     * @throws ErrorException
-     */
-    private function post(string $uri, array $requestBody): string
-    {
-        try {
-            $response = $this->getHttpClient()->request('POST', $uri, [
-                'headers' => ['Content-Type' => 'application/json'],
-                'body' => Json::encode($requestBody),
-            ]);
-        } catch (ClientException $e) {
-            throw ErrorException::fromClientException($e);
-        }
-
-        return $response->getBody()->getContents();
-    }
-
-    private function getHttpClient(): ClientInterface
-    {
-        return $this->httpClient ?? $this->createHttpClient(['base_uri' => Letter::API_ENDPOINT]);
-    }
-
-    /**
-     * Create the Guzzle client used when none was injected. Override to add
-     * middleware, timeouts or a different base URI.
-     *
-     * @param array<string, mixed> $config Guzzle client configuration
-     */
-    protected function createHttpClient(array $config): ClientInterface
-    {
-        return new HttpClient($config);
+        return Error::fromArray(Json::decodeObject((string) $response->getBody()));
     }
 }

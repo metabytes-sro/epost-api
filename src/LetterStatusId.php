@@ -8,7 +8,7 @@ namespace MetabytesSRO\EPost\Api;
  * Letter processing status IDs from the E-POSTBUSINESS API.
  *
  * A letter moves through 1, 2, 3 and 4 in order. Status 99 can follow any of
- * them when processing fails; the reasons are in LetterStatus::getErrors().
+ * them when processing fails; the reasons are in LetterStatus::$errors.
  */
 enum LetterStatusId: int
 {
@@ -24,16 +24,8 @@ enum LetterStatusId: int
     /** Print centre reported the letter as sent, 1 to 2 working days after transfer. (sent) */
     case ProcessingInPrintingCenter = 4;
 
-    /** Processing failed, see LetterStatus::getErrors(). (failed) */
+    /** Processing failed, see LetterStatus::$errors. (failed) */
     case ProcessingError = 99;
-
-    /**
-     * Map a raw statusID from the API to the enum. Returns null for unknown IDs.
-     */
-    public static function fromStatusId(int $statusId): ?self
-    {
-        return self::tryFrom($statusId);
-    }
 
     /**
      * True while the letter has not reached the print centre's final feedback (status 1 to 3).

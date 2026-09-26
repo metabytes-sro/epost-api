@@ -5,75 +5,77 @@ declare(strict_types=1);
 namespace MetabytesSRO\EPost\Api\Pricing;
 
 /**
- * Calculates letter shipping costs based on E-POST MAILER price lists.
+ * Estimates the price of a letter from the E-POST MAILER price lists.
  *
- * Note: The E-POSTBUSINESS API does not provide a pricing endpoint for Letter (hybrid mail).
- * CostEstimate exists only for Campaign/Dialogpost. This calculator uses the official
- * price lists for local estimation.
- *
- * @see https://www.deutschepost.de/dam/jcr:4f6b160f-5beb-470a-9891-81e02acdd6e6/dp-epost-preisliste-mailer-basis_250+-ab%2001012025.pdf
- * @see https://www.deutschepost.de/dam/jcr:d7e72ba2-a855-4b1d-9300-3c5c6745bf86/dp-epost-preisliste-international-mailer-basis-ab-01012025_vf.pdf
+ * The E-POSTBUSINESS API has no pricing endpoint for letters (its cost estimate
+ * only covers Dialogpost campaigns), so this calculator works locally from the
+ * published prices in PriceConfig. Prices are in EUR net.
  */
-class LetterPriceCalculator
+final readonly class LetterPriceCalculator
 {
     public function __construct(
-        private readonly PriceConfig $config,
+        private PriceConfig $config = new PriceConfig(),
     ) {}
 
+    /**
+     * Calculator configured from the EPOST_TARIFF and EPOST_PRICES_JSON environment variables.
+     */
     public static function fromEnv(): self
     {
         return new self(PriceConfig::fromEnv());
     }
 
-    /**
-     * Calculate the price for a single letter.
-     *
-     * @param int $weightInGrams Letter weight in grams (incl. envelope)
-     * @param int $pageCount Number of pages
-     * @param bool $isColor Color (true) or B/W (false)
-     * @param bool $isDuplex Duplex (true) or simplex (false)
-     * @param bool $isInternational International shipment
-     */
-    public function calculate(
-        int  $weightInGrams,
-        int  $pageCount,
-        bool $isColor = false,
-        bool $isDuplex = false,
-        bool $isInternational = false,
-    ): float {
-        $format = LetterFormat::fromWeight($weightInGrams);
-        $formatKey = $format->value;
-        $tariff = $this->config->getTariff();
-        $priceKey = ($isColor ? 'color' : 'sw') . '_' . ($isDuplex ? 'duplex' : 'simplex');
-
-        if ($isInternational) {
-            $postagePrice = $this->config->getInternationalPostagePrice()[$formatKey] ?? 0.0;
-            $printPrice = $this->config->getInternationalPrintPrice()[$tariff][$formatKey][$priceKey] ?? 0.0;
-            $includedSheetQty = $format->getIncludedSheets();
-            $extraSheets = max(0, $pageCount - $includedSheetQty);
-            $perSheetPrice = $this->config->getInternationalPrintPrice()[$tariff]['per_sheet'][$priceKey] ?? 0.0;
-            return $postagePrice + $printPrice + ($extraSheets * $perSheetPrice);
-        }
-
-        $basePrice = $this->config->getNationalPrices()[$tariff][$formatKey][$priceKey] ?? 0.0;
-        $includedSheetQty = $format->getIncludedSheets();
-        $extraSheets = max(0, $pageCount - $includedSheetQty);
-        $perSheetPrice = $this->config->getNationalPrices()[$tariff]['per_sheet'][$priceKey] ?? 0.0;
-        return $basePrice + ($extraSheets * $perSheetPrice);
+    public function getConfig(): PriceConfig
+    {
+        return $this->config;
     }
 
     /**
-     * Calculate the total price for multiple identical letters.
+     * Price of one letter.
+     *
+     * @param int $weightGrams Weight in grams including the envelope; decides the format
+     * @param int $pages Number of printed sheets; sheets beyond the format's included ones cost extra
+     * @param bool $color Colour instead of black and white
+     * @param bool $duplex Both sides of each sheet
+     * @param bool $international Destination outside Germany
+     */
+    public function calculate(
+        int $weightGrams,
+        int $pages,
+        bool $color = false,
+        bool $duplex = false,
+        bool $international = false,
+    ): float {
+        $format = LetterFormat::fromWeight($weightGrams);
+        $tariff = $this->config->tariff->value;
+        $option = ($color ? 'color' : 'sw') . '_' . ($duplex ? 'duplex' : 'simplex');
+        $extraSheets = max(0, $pages - $format->includedSheets());
+
+        if ($international) {
+            $postage = $this->config->getInternationalPostagePrices()[$format->value] ?? 0.0;
+            $print = $this->config->getInternationalPrintPrices()[$tariff][$format->value][$option] ?? 0.0;
+            $perSheet = $this->config->getInternationalPrintPrices()[$tariff]['per_sheet'][$option] ?? 0.0;
+
+            return round($postage + $print + $extraSheets * $perSheet, 2);
+        }
+
+        $base = $this->config->getNationalPrices()[$tariff][$format->value][$option] ?? 0.0;
+        $perSheet = $this->config->getNationalPrices()[$tariff]['per_sheet'][$option] ?? 0.0;
+
+        return round($base + $extraSheets * $perSheet, 2);
+    }
+
+    /**
+     * Total price of several identical letters.
      */
     public function calculateBatch(
         int $quantity,
         int $weightGrams,
-        int $pageCount,
-        bool $isColor = false,
-        bool $isDuplex = false,
-        bool $isInternational = false,
+        int $pages,
+        bool $color = false,
+        bool $duplex = false,
+        bool $international = false,
     ): float {
-        $unitPrice = $this->calculate($weightGrams, $pageCount, $isColor, $isDuplex, $isInternational);
-        return round($unitPrice * $quantity, 2);
+        return round($this->calculate($weightGrams, $pages, $color, $duplex, $international) * $quantity, 2);
     }
 }
