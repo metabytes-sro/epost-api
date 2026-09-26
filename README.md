@@ -1,208 +1,324 @@
-# E-POSTBUSINESS API V2 PHP integration
+# E-POSTBUSINESS API client for PHP
 
-[![Latest Version on Packagist](https://img.shields.io/packagist/v/metabytes-sro/epost-api.svg?style=flat-square)](https://packagist.org/packages/metabytes-sro/epost-api)
+[![CI](https://github.com/metabytes-sro/epost-api/actions/workflows/ci.yml/badge.svg)](https://github.com/metabytes-sro/epost-api/actions/workflows/ci.yml)
+[![Latest Version on Packagist](https://img.shields.io/packagist/v/metabytes-sro/epost-api.svg)](https://packagist.org/packages/metabytes-sro/epost-api)
+[![PHP Version](https://img.shields.io/packagist/dependency-v/metabytes-sro/epost-api/php.svg)](https://packagist.org/packages/metabytes-sro/epost-api)
+[![License](https://img.shields.io/packagist/l/metabytes-sro/epost-api.svg)](LICENSE)
 
-PHP integration for the [E-POSTBUSINESS API](https://api.epost.docuguide.com/swagger/index.html) for electronic submission of documents that are subsequently sent as physical letters.
+Send PDF documents as physical letters through the Deutsche Post
+[E-POSTBUSINESS API](https://api.epost.docuguide.com/swagger/index.html), track
+their delivery, manage queued letters and estimate postage.
 
-## Install
+- Typed request builders and response objects for every `/api/Letter` and `/api/Login` endpoint
+- One exception hierarchy: every API error becomes an `ErrorException` with the E-POST error code
+- Tracking status codes for registered mail (Einschreiben) with German descriptions
+- Local price calculator based on the official Deutsche Post price lists
+- Tested against a mocked API on PHP 8.1 to 8.5, with 100% line coverage enforced in CI
+
+## Installation
 
 ```bash
 composer require metabytes-sro/epost-api
 ```
 
-## Upgrading
+Requires PHP 8.1 or newer, the `fileinfo` extension and Guzzle 7.
 
-See [UPGRADE.md](UPGRADE.md) for migration instructions when upgrading between versions.
-
-## Requirements
-
-- PHP ^8.1
-- guzzlehttp/guzzle ^7.0.1
-
-## Usage
-
-### Authentication
-
-Obtain an access token via the [OAuth2 Provider](https://github.com/richardhj/oauth2-epost) or the built-in Login:
+## Quick start
 
 ```php
 use MetabytesSRO\EPost\Api\AccessToken;
-use MetabytesSRO\EPost\Api\Letter;
-
-$token = new AccessToken($vendorID, $ekp, $secret, $password);
-```
-
-### Sending a letter
-
-```php
+use MetabytesSRO\EPost\Api\Exception\ErrorException;
 use MetabytesSRO\EPost\Api\Letter;
 use MetabytesSRO\EPost\Api\Metadata\Envelope;
 use MetabytesSRO\EPost\Api\Metadata\Envelope\Recipient;
-use MetabytesSRO\EPost\Api\Metadata\DeliveryOptions;
 
-$letter = new Letter();
-$envelope = new Envelope();
-$recipient = new Recipient();
-$recipient
-    ->setAddressLine('Max Mustermann AG', 0)   // addressLine1
-    ->setAddressLine('Musterstrasse 99', 1)    // addressLine2
+$token = new AccessToken($vendorId, $ekp, $secret, $password);
+
+$recipient = (new Recipient())
+    ->setAddressLine('Max Mustermann AG', 0)   // addressLine1: name or company
+    ->setAddressLine('Musterstrasse 99', 1)    // addressLine2: street
     ->setZipCode('12345')
     ->setCity('Bonn');
 
-$envelope->setRecipient($recipient);
-
-$letter
+$letter = (new Letter())
     ->setAccessToken($token)
-    ->setEnvelope($envelope)
-    ->setAttachment('/path/to/document.pdf')
-    ->setTestEnvironment(true);
-
-// Optional: cover letter (PDF path)
-$letter->setCoverLetter('/path/to/cover.pdf');
-
-// Optional: test mode - receive PDF at email instead of physical send
-$letter->setTestEmail('test@example.com');
+    ->setEnvelope((new Envelope())->setRecipient($recipient))
+    ->setAttachment('/path/to/document.pdf');
 
 try {
     $letter->send();
     $letterId = $letter->getLetterId();
-} catch (MetabytesSRO\EPost\Api\Exception\ErrorException $e) {
-    $error = $e->getError();
-    // $error->getCode(), $error->getDescription()
+} catch (ErrorException $e) {
+    // $e->getCode() is the E-POST error code, e.g. "E301" (no PDF detected)
+    // $e->getMessage() is the description, $e->getError() the full Error object
 }
 ```
 
-### Einschreiben (registered mail) with return receipt
+The attachment must be a PDF/A-1b document in DIN A4 portrait format with the
+recipient address positioned in the address window. See the
+[API documentation](https://api.epost.docuguide.com/swagger/index.html) for the
+address template.
 
-When using "Einschreiben Rückschein" or "Einschreiben eigenhändig Rückschein", you must provide the return address where the handwritten delivery confirmation is sent:
+## Authentication
+
+`AccessToken` logs in lazily on first use and caches the JSON Web Token, which
+is valid for 24 hours by default.
+
+```php
+$token = new AccessToken($vendorId, $ekp, $secret, $password);
+
+// Reuse a token obtained elsewhere (OAuth2 provider, cache, previous request):
+$token = AccessToken::fromToken($jwt);
+
+// Log in again after the API reported E101 (token expired):
+$token->refresh();
+```
+
+The `Login` class exposes the underlying endpoints, including the first-time
+setup flow and the health check:
+
+```php
+use MetabytesSRO\EPost\Api\Login;
+
+$login = new Login();
+$login->smsRequest($vendorId, $ekp);                              // SMS code to the registered mobile
+$secret = $login->setPassword($vendorId, $ekp, $newPassword, $smsCode);
+$response = $login->login($vendorId, $ekp, $secret, $password);   // ->getToken()
+
+$status = $login->healthCheck();   // Error object: I501 = OK, W501 = maintenance announced, E501 = inactive
+```
+
+## Sending letters
+
+### Delivery options
 
 ```php
 use MetabytesSRO\EPost\Api\Metadata\DeliveryOptions;
-use MetabytesSRO\EPost\Api\Metadata\RegisteredLetterReturnAddress;
 
-$deliveryOptions = new DeliveryOptions();
-$deliveryOptions
-    ->setRegisteredWithReturnReceipt()  // or setRegisteredAddresseeOnlyWithReturnReceipt()
-    ->setColorColored();
+$options = (new DeliveryOptions())
+    ->setColorColored()          // or setColorGrayscale()
+    ->setDuplex(true)
+    ->setRegisteredStandard();   // Einschreiben
 
-$returnAddress = new RegisteredLetterReturnAddress();
-$returnAddress
-    ->setAddressLine1('My Company GmbH')
-    ->setZipCode('53115')
-    ->setCity('Bonn');
+$letter->setDeliveryOptions($options);
+```
 
-$deliveryOptions->setRegisteredLetterReturnAddress($returnAddress);
-$letter->setDeliveryOptions($deliveryOptions);
+Registered mail options accepted by the API:
+
+| Method | API value |
+|--------|-----------|
+| `setRegisteredStandard()` | `Einschreiben` |
+| `setRegisteredSubmissionOnly()` | `Einwurf Einschreiben` |
+| `setRegisteredWithReturnReceipt()` | `Einschreiben Rückschein` |
+| `setRegisteredNo()` | not registered |
+
+The API rejects duplex printing for registered letters (E312) and registered
+letters to international addresses (E311). For "Einschreiben Rückschein" the
+return address is read from the sender line in the letter's address window;
+explicit return address fields are obsolete and ignored by the API.
+
+### Cover letter
+
+```php
+// Let the API generate a standard cover sheet with the address, or supply your own PDF:
+$letter->setCoverLetter('/path/to/cover.pdf');
+```
+
+### Test mode
+
+In test mode the API processes the letter and emails the result as PDF instead
+of printing it:
+
+```php
+$letter->setTestEmail('test@example.com');
+$letter->send();
+
+$result = $letter->getTestResult();   // LetterDataResult
+file_put_contents('result.pdf', $result->getPdf());
+```
+
+### International letters
+
+```php
+$recipient
+    ->setAddressLine('Mario Rossi', 0)
+    ->setAddressLine('Via Roma 1', 1)
+    ->setZipCode('00100')          // three spaces when the country has no postal codes
+    ->setCity('Roma')
+    ->setCountry('ITALIEN');       // German name in capitals as per ISO 3166-1
 ```
 
 ### Batch sending
 
-Send multiple letters in one API request:
+Several letters in one request (up to 300 MB of PDFs per request):
 
 ```php
-$letters = [$letter1, $letter2, $letter3];
-$letter->setAccessToken($token);
-$results = $letter->sendBatch($letters);
+$client = (new Letter())->setAccessToken($token);
+$results = $client->sendBatch([$letter1, $letter2, $letter3]);   // LetterSendResult[]
+
 foreach ($results as $result) {
-    $letterId = $result->getLetterId();
+    $result->getLetterId();
+    $result->getFileName();
 }
 ```
 
-### Status queries
+## Status queries
+
+All status methods return `LetterStatus` objects. The API allows one status
+query every 5 seconds; more frequent calls fail with `ErrorException::isRateLimited()`.
 
 ```php
-// Single letter
-$status = $letter->getLetterStatus($letterId);
+$client = (new Letter())->setAccessToken($token);
 
-// Multiple by IDs
-$statuses = $letter->getMultipleLetterStatuses([123, 456], $onlyIssues = false);
+$status = $client->getLetterStatus($letterId);
+$status->getStatus();          // LetterStatusId enum, or null for an unknown ID
+$status->isOpen();             // status 1-3: accepted, processed, sent to the print centre
+$status->isSent();             // status 4: print centre reported the letter as sent
+$status->hasError();           // status 99: see $status->getErrors()
+$status->getRegisteredLetterId();
+$status->getFrankierId();
+$status->getNumberOfPages();
 
-// By date range
-$statuses = $letter->getLetterStatusByDateRange('2024-01-01', '2024-01-31');
-
-// Open letters (status 1–3, not yet sent)
-$statuses = $letter->getOpenLetters();
-
-// Einschreiben (registered letters) by date range
-$statuses = $letter->getRegisteredLetterStatus('2024-01-01', '2024-01-31', $onlyOpen = false);
-
-// Einschreiben tracking status (resolve code to description)
-$status = $letter->getLetterStatus($letterId);
-$trackCode = $status->getRegisteredLetterStatus();  // e.g. "DELIVERED", "IN_DELIVERY"
-$description = \MetabytesSRO\EPost\Api\TrackStatusCodes::getDescription($trackCode);  // German description
-$isFinal = \MetabytesSRO\EPost\Api\TrackStatusCodes::isFinal($trackCode);  // true if delivery complete
-
-// Search by custom1 field
-$statuses = $letter->getLetterStatusByCustom1('RE-000123');
-
-// By batch ID
-$statuses = $letter->getLetterStatusByBatch(12345);
+$client->getMultipleLetterStatuses([123, 456], onlyIssues: false);
+$client->getLetterStatusByDateRange('2024-01-01', '2024-01-31', onlyIssues: false);
+$client->getOpenLetters();
+$client->getLetterStatusByCustom1('RE-000123');
+$client->getLetterStatusByBatch(12345);
+$client->getRegisteredLetterStatus('2024-01-01', '2024-01-31', onlyOpen: false);
+$client->getPremiumAdressFeedback('2024-01-01', '2024-01-31', onlyFeedback: false);
 ```
 
-### UploadManagement plugin (queued letters)
-
-For letters submitted with the UploadManagement plugin:
+### Registered mail tracking
 
 ```php
-// Cancel queued letters
-$results = $letter->cancelQueued([74567567, 65765678]);
+use MetabytesSRO\EPost\Api\TrackStatusCodes;
 
-// Release (expedite) queued letters
-$results = $letter->releaseQueued([74567567, 65765678]);
+$code = $status->getRegisteredLetterStatus();        // e.g. "DELIVERED", "IN_DELIVERY"
+TrackStatusCodes::getDescription($code);             // German description
+TrackStatusCodes::isFinal($code);                    // true once delivery is complete
 ```
 
-### PremiumAdress feedback
+### Processing status IDs
+
+| ID | `LetterStatusId` | Meaning |
+|----|------------------|---------|
+| 1 | `AcceptanceOfShipment` | Letter accepted, JSON validated |
+| 2 | `ProcessingTheShipment` | PDF checked and released for the print centre |
+| 3 | `DeliveryToThePrintingCenter` | Transferred to the print centre |
+| 4 | `ProcessingInPrintingCenter` | Reported as sent by the print centre |
+| 99 | `ProcessingError` | Failed, see `getErrors()` |
+
+## Queued letters (UploadManagement plugin)
+
+Letters submitted with the UploadManagement plugin wait for a minimum quantity
+or a due date. They can be cancelled or released early while they are queued:
 
 ```php
-$feedback = $letter->getPremiumAdressFeedback('2024-01-01', '2024-01-31');
+$client->cancelQueued([74567567, 65765678]);    // QueuedOperationResult[]
+$client->releaseQueued([74567567, 65765678]);
 ```
 
-### Price estimation
+## Error handling
 
-The E-POSTBUSINESS API does not provide a pricing endpoint for Letter (hybrid mail). Use the built-in calculator with official price lists (valid from 01.01.2025):
+Every exception thrown by this package implements
+`MetabytesSRO\EPost\Api\Exception\EPostException`.
+
+| Exception | Thrown when |
+|-----------|-------------|
+| `ErrorException` | The API answered with an error (HTTP 4xx). `getCode()` is the E-POST code, `getError()` the parsed Error object. |
+| `InvalidFileFormatException` | An attachment or cover letter is missing on disk or not a PDF. |
+| `InvalidRecipientDataException` | Recipient data is incomplete or invalid. |
+| `MissingPreconditionException` and subclasses | Something required was not set, e.g. no envelope, attachment or access token. |
+
+```php
+use MetabytesSRO\EPost\Api\Exception\EPostException;
+use MetabytesSRO\EPost\Api\Exception\ErrorException;
+
+try {
+    $client->getLetterStatus($letterId);
+} catch (ErrorException $e) {
+    if ($e->isRateLimited()) {          // HTTP 429 / E322: wait 5 seconds and retry
+    } elseif ($e->isNotFound()) {       // HTTP 404 / E201: unknown letter ID
+    } elseif ($e->isAuthenticationError()) {   // E001, E002, E101: log in again
+    }
+} catch (EPostException $e) {
+    // anything else raised by this package
+}
+```
+
+Connection failures and timeouts are not converted; Guzzle's
+`ConnectException` propagates so you can apply your own retry policy.
+
+The complete catalogue of error, warning and info codes is in the `Error`
+schema of the [API definition](docs/api/README.md).
+
+## Price estimation
+
+The E-POSTBUSINESS API has no pricing endpoint for letters. The calculator uses
+the official Deutsche Post price lists (valid from 01.01.2025):
 
 ```php
 use MetabytesSRO\EPost\Api\Pricing\LetterPriceCalculator;
 use MetabytesSRO\EPost\Api\Pricing\PriceConfig;
 
-// Default prices from Deutsche Post (Tarif Basis)
 $calculator = LetterPriceCalculator::fromEnv();
 
-// Single letter: weight (g), pages, color, duplex, international
-$price = $calculator->calculate(20, 1, false, false, false);  // 0.80 € national standard
-
-// Batch
+// weight in grams, pages, colour, duplex, international
+$price = $calculator->calculate(20, 1, false, false, false);        // 0.80 EUR
 $total = $calculator->calculateBatch(100, 50, 4, true, false, false);
 ```
 
-**Environment variables** (optional):
+Environment variables:
 
 | Variable | Description |
 |----------|-------------|
 | `EPOST_TARIFF` | `basis` (default) or `250plus` |
-| `EPOST_PRICES_JSON` | JSON object to override default prices (e.g. negotiated rates) |
-
-Example `.env`:
+| `EPOST_PRICES_JSON` | JSON object with negotiated prices; merged into the defaults |
 
 ```
 EPOST_TARIFF=250plus
-# EPOST_PRICES_JSON={"national":{"basis":{"standard":{"sw_simplex":0.75}}}}
+EPOST_PRICES_JSON={"national":{"basis":{"standard":{"sw_simplex":0.75}}}}
 ```
 
-Price sources: [National](https://www.deutschepost.de/dam/jcr:4f6b160f-5beb-470a-9891-81e02acdd6e6/dp-epost-preisliste-mailer-basis_250+-ab%2001012025.pdf), [International](https://www.deutschepost.de/dam/jcr:d7e72ba2-a855-4b1d-9300-3c5c6745bf86/dp-epost-preisliste-international-mailer-basis-ab-01012025_vf.pdf)
+Price lists: [national](https://www.deutschepost.de/dam/jcr:4f6b160f-5beb-470a-9891-81e02acdd6e6/dp-epost-preisliste-mailer-basis_250+-ab%2001012025.pdf),
+[international](https://www.deutschepost.de/dam/jcr:d7e72ba2-a855-4b1d-9300-3c5c6745bf86/dp-epost-preisliste-international-mailer-basis-ab-01012025_vf.pdf).
 
-## API reference
+## Custom HTTP client
 
-See the [E-POSTBUSINESS API Swagger documentation](https://api.epost.docuguide.com/swagger/index.html) for full details.
+Pass a configured Guzzle client to add timeouts, logging or retries. It must
+carry the base URI and the `Authorization: Bearer` header itself:
 
-## Supporting the project
+```php
+use GuzzleHttp\Client;
 
-If this package is useful to you and you would like to support further development, we welcome donations. Please get in touch via [metabytes.eu](https://metabytes.eu) or [info@metabytes.eu](mailto:info@metabytes.eu). We are also open to feature requests.
+$http = new Client([
+    'base_uri' => Letter::API_ENDPOINT,
+    'timeout' => 30,
+    'headers' => ['Authorization' => 'Bearer ' . $token->getToken()],
+]);
 
-## License
+$client = new Letter($http);
+```
 
-LGPL-3.0+
+Alternatively extend `Letter` or `Login` and override `createHttpClient()`.
+
+## Upgrading
+
+See [UPGRADE.md](UPGRADE.md) for behaviour changes and deprecations between
+versions, and [CHANGELOG.md](CHANGELOG.md) for the full history.
 
 ## Contributing
 
-Please follow the [Symfony Coding Standards](http://symfony.com/doc/current/contributing/code/standards.html).
+Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md)
+for the development setup; `composer check` runs the same code style, static
+analysis and test checks as CI.
+
+## Supporting the project
+
+If this package is useful to you, consider supporting further development.
+Get in touch via [metabytes.eu](https://metabytes.eu) or
+[info@metabytes.eu](mailto:info@metabytes.eu). Feature requests are welcome too.
+
+## License
+
+LGPL-3.0-or-later. See [LICENSE](LICENSE).
